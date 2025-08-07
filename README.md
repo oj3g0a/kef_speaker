@@ -2,270 +2,201 @@
 
 ## 概要
 
-本文書は、KEF LSX II ネットワークスピーカーを外部プログラムから制御し、Amazon Musicなどのストリーミングサービスを再生させるためのAPI仕様と手順を解説するものです。
+本文書は、KEF LSX II ネットワークスピーカーを外部プログラムから制御するためのHTTP/JSON API仕様を解説するものです。
 
-**システムアーキテクチャの要点:**
+このAPIは、音楽サービスの閲覧、再生制御、スピーカーの各種設定変更など、アプリケーション開発に必要な機能を提供します。
 
-  * **司令塔 (アプリ)**: ユーザーインターフェースと認証ロジックを担当。
-  * **実行役 (スピーカー)**: ローカルAPIを提供し、受け取った命令（再生、音量調整など）を実行する。
-  * **仲介役 (Airable Cloud)**: KEFと各音楽配信サービス（Amazon Music等）の間の通信を中継・通訳する。
-  * **音源 (Amazon Music Cloud)**: 楽曲データと、再生に必要な一時的な認証情報（トークン）を発行する。
+*注: スピーカーにはハードウェアを直接制御する低レベルなバイナリTCP API（ポート50001）も存在しますが、本文書で解説するHTTP APIがその全機能をカバーしており、より柔軟な制御が可能であるため、低レベルAPIに関する説明は割愛します。*
 
-アプリケーションは、スピーカーを「窓口」としてAirable Cloudと通信し、最終的にAmazon Musicのコンテンツを再生します。
+### APIエンドポイントリファレンス
+
+| APIエンドポイント | HTTPメソッド | 役割 |
+| :--- | :--- | :--- |
+| `GET /api/getRows` | `GET` | メニューや曲の**一覧**を取得します。 |
+| `GET /api/getData` | `GET` | 単一項目の**詳細情報**や**現在の設定値**を取得します。 |
+| `POST /api/setData` | `POST` | 再生や**設定変更**などのアクションを命令します。 |
+| `POST /api/event/modifyQueue` | `POST` | サーバーからの**イベント通知を購読**するために使用します。 |
+| `GET /api/event/pollQueue` | `GET` | 購読したイベントの**更新情報を受信**します。 |
 
 -----
 
-## 1\. 認証フロー (OAuth 2.0)
+## Part 1: 機能別API解説
 
-Amazon Musicを再生するには、まず正規のユーザーとして認証し、スピーカー（Airableサービス）がユーザーの代わりにAmazon Musicを操作する許可を得る必要があります。このプロセスはOAuth 2.0に準拠しています。
+### 1.1 音楽再生とプレイリスト操作
 
-### 1.1. 準備：ログアウト
+#### **フロー概要**
 
-認証フローを開始するには、システムがログアウト状態である必要があります。
+1.  **閲覧**: `getRows`を再帰的に呼び出し、再生したい曲の情報（`trackRoles`）を見つけます。
+2.  **準備**: `setData`で`playlists:pl/clear`を呼び出して現在の再生キューをクリアし、`playlists:pl/addexternalitems`で再生したい曲をキューに追加します。
+3.  **再生**: `setData`で`player:player/control`を呼び出し、再生を開始します。
 
-  - **Endpoint**: `POST http://{SPEAKER_IP}/api/setData`
-  - **Body**:
+#### **`player:player/control` による再生開始**
+
+再生コマンドには、再生する曲の情報に加え、シャッフルとリピートのオプションを指定できます。
+
+  - **`path`**: `player:player/control`
+  - **`role`**: `activate`
+  - **`value`の構造**:
     ```json
     {
-        "path": "airable:logout:amazon:https://8448239770.airable.io/amazon/logout",
-        "role": "activate",
-        "value": {}
+        "control": "play",
+        "index": 0,
+        "trackRoles": {
+            "type": "audio",
+            "path": "airable:https://.../track/[Track_ID]",
+            "title": "曲名",
+            "subTitle": "アーティスト名",
+            "mediaData": {
+                "artwork": "http://.../artwork.jpg",
+                "duration": 240
+            },
+            "...": "..."
+        },
+        "mediaRoles": {
+            "type": "container",
+            "path": "playlists:pq/getitems",
+            "mediaData": {
+                "metaData": {
+                    "playLogicPath": "playlists:playlogic"
+                }
+            },
+            "title": "PlayQueue tracks"
+        },
+        "shuffle": false,
+        "repeatMode": "Off"
     }
     ```
 
-### 1.2. ステップ1：認証開始URLの取得
+#### **`settings:/mediaPlayer/playMode` による再生中モード変更**
 
-ログアウト状態でAmazon Musicのトップメニューにアクセスすると、ログインページへのリダイレクト指示が返されます。
+再生を中断することなく、いつでも再生モードを変更できます。
 
-**A. トップメニューへアクセス**
+  - **`path`**: `settings:/mediaPlayer/playMode`
+  - **`role`**: `value`
+  - **`value`**: 以下のいずれかの値を持つJSONオブジェクトを`setData`で送信します。
 
-```bash
-curl "http://{SPEAKER_IP}/api/getRows?path=airable:https%3A%2F%2F8448239770.airable.io%2Famazon&roles=%40all"
+| `playerPlayMode`の値 | 説明 |
+| :--- | :--- |
+| `"normal"` | 通常再生 |
+| `"shuffle"` | シャッフル |
+| `"repeatOne"` | 1曲リピート |
+| `"repeatAll"` | 全曲リピート |
+| `"shuffleRepeatAll"`| シャッフル ＋ 全曲リピート |
+
+**リクエストボディ例 (`setData`)**:
+
+```json
+{
+  "path": "settings:/mediaPlayer/playMode",
+  "role": "value",
+  "value": {
+    "type": "playerPlayMode",
+    "playerPlayMode": "shuffleRepeatAll"
+  }
+}
 ```
 
-  * **応答 (抜粋)**: `{"rowsRedirect":"airable:message8","rows":[]}`
+### 1.2 スピーカーの一般設定
 
-**B. リダイレクト先へアクセス**
-応答に含まれる`rowsRedirect`のパスを使って、再度`getRows`を実行します。
+`getData`で現在の値を取得し、`setData`で値を変更できます。
 
-```bash
-curl "http://{SPEAKER_IP}/api/getRows?path=airable%3Amessage8&roles=%40all"
+**取得**: `GET /api/getData?path={path}&roles=value`
+**設定**: `POST /api/setData` with `{"path": "{path}", "role": "value", "value": {"type": "...", "...": ...}}`
+
+| 機能 | `path` | 値の型 (`type`) |
+| :--- | :--- | :--- |
+| **スピーカー名** | `settings:/deviceName` | `string_` |
+| **UI言語** | `settings:/ui/language` | `string_` |
+| **Airable言語** | `settings:/airable/language` | `string_` |
+| **音量上限の有効化** | `settings:/kef/host/volumeLimit` | `bool_` |
+| **最大音量** | `settings:/kef/host/maximumVolume` | `i32_` (0-100) |
+| **音量ステップ幅** | `settings:/kef/host/volumeStep` | `i16_` |
+| **各入力のデフォルト音量** | `settings:/kef/host/defaultVolume{Source}`\<br\>(Source: Wifi, Analogue, Optical, TV, USB, Bluetooth, Coaxial, Global) | `i32_` |
+| **自動スタンバイ** | `settings:/kef/host/standbyMode` | `kefStandbyMode` |
+| **自動起動ソース** | `settings:/kef/host/wakeUpSource` | `kefWakeUpSource` |
+| **HDMIへ自動切替** | `settings:/kef/host/autoSwitchToHDMI` | `bool_` |
+| **天面パネル無効化** | `settings:/kef/host/disableTopPanel` | `bool_` |
+| **起動音** | `settings:/kef/host/startupTone` | `bool_` |
+| **スタンバイLED無効化** | `settings:/kef/host/disableFrontStandbyLED` | `bool_` |
+| **マスター/スレーブ接続** | `settings:/kef/host/cableMode` | `kefCableMode` ("wired"等) |
+| **マスターチャンネル** | `settings:/kef/host/masterChannelMode` | `kefMasterChannelMode` ("left" or "right") |
+| **USB充電** | `settings:/kef/host/usbCharging` | `bool_` |
+| **サブウーファー常時ON** | `settings:/kef/host/subwooferForceOn` | `bool_` |
+
+### 1.3 DSP/EQ（音質）設定
+
+スピーカーの音質を詳細に調整します。設定項目の一覧は`getRows`で取得し、各項目の値は`getData`/`setData`で個別に操作します。
+
+**設定項目一覧の取得**: `GET /api/getRows?path=kef:dsp/editValue&roles=@all`
+
+**設定可能な項目 (`path`一覧)**:
+| 機能 | `path` | 値の型 (`type`) |
+| :--- | :--- | :--- |
+| **バランス** | `settings:/kef/dsp/v2/balance` | `i32_` |
+| **デスクモード ON/OFF** | `settings:/kef/dsp/v2/deskMode` | `bool_` |
+| **デスクモード補正値** | `settings:/kef/dsp/v2/deskModeSetting` | `double_` (dB) |
+| **壁モード ON/OFF** | `settings:/kef/dsp/v2/wallMode` | `bool_` |
+| **壁モード補正値** | `settings:/kef/dsp/v2/wallModeSetting` | `double_` (dB) |
+| **高音調整** | `settings:/kef/dsp/v2/trebleAmount` | `double_` (dB) |
+| **低音拡張** | `settings:/kef/dsp/v2/bassExtension` | `string_` ("standard", "extra", "less") |
+| **位相補正** | `settings:/kef/dsp/v2/phaseCorrection` | `bool_` |
+| **サブウーファー出力** | `settings:/kef/dsp/v2/subwooferOut` | `bool_` |
+| **ハイパス ON/OFF** | `settings:/kef/dsp/v2/highPassMode` | `bool_` |
+| **ハイパス周波数** | `settings:/kef/dsp/v2/highPassModeFreq` | `double_` (Hz) |
+| **サブウーファーゲイン** | `settings:/kef/dsp/v2/subwooferGain` | `i32_` (dB) |
+| **サブウーファー極性** | `settings:/kef/dsp/v2/subwooferPolarity`| `string_` ("normal", "inverted") |
+| **サブウーファーLP周波数**| `settings:/kef/dsp/v2/subOutLPFreq` | `double_` (Hz) |
+
+### 1.4 プレイヤーとシステム情報の取得
+
+主に`getData`を使用し、再生中の状態やシステム情報を取得します。
+
+| 機能 | `path` | API | 説明 |
+| :--- | :--- | :--- | :--- |
+| **現在再生中の情報** | `player:player/data` | `getData` | 曲、状態、制御オプションなどを含む詳細なJSONを返す |
+| **再生時間** | `player:player/data/playTime`| `getData` | 現在の再生時間（ミリ秒）を返す |
+| **現在の音量** | `player:volume` | `getData` | 現在の音量を返す (0-100の整数) |
+| **MACアドレス**| `settings:/system/primaryMacAddress` | `getData` | プライマリMACアドレスを取得 |
+| **ファームウェアバージョン**| `settings:/version` | `getData` | ファームウェアのバージョン文字列を取得 |
+| **モデル名** | `settings:/kef/host/modelName`| `getData` | スピーカーのモデル名を取得 (例: "SP4041") |
+| **シリアル番号** | `settings:/kef/host/serialNumber`| `getData` | シリアル番号を取得 |
+| **電源状態** | `settings:/kef/host/speakerStatus`| `getData` | 電源状態を取得 (例: "powerOn") |
+| **アラーム/タイマー** | `alerts:/list` | `getData` | 設定されているアラームやタイマーの一覧を取得 |
+| **FW更新情報**| `kef:fwupgrade/info` | `getData` | ファームウェア更新の状態や進捗を取得 |
+
+### 1.5 イベント通知
+
+アプリは`event` APIを利用して、スピーカーの状態変化をリアルタイムに受け取ることができます。
+
+**フロー**:
+
+1.  `POST /api/event/modifyQueue` を呼び出し、監視したい`path`を購読(`subscribe`)します。
+2.  `GET /api/event/pollQueue?queueId={ID}` をロングポーリングで呼び出し続けます。
+3.  スピーカー側で状態変化（例：音量変更）が起きると、`pollQueue`への応答として更新情報が返されます。
+4.  アプリは応答を受け取ったら、すぐに次の`pollQueue`リクエストを送信します。
+
+**`modifyQueue`リクエストボディ例**:
+
+```json
+{
+  "subscribe": [
+    {"path": "player:player/data", "type": "item"},
+    {"path": "player:volume", "type": "itemWithValue"},
+    {"path": "settings:/mediaPlayer/playMode", "type": "itemWithValue"},
+    {"path": "playlists:pq/getitems", "type": "rows"}
+  ],
+  "unsubscribe": []
+}
 ```
 
-  * **応答 (抜粋)**: この応答の中に、認証を開始するための情報が含まれています。
-    ```json
-    {
-        "title": "ログイン",
-        "type": "oauth2",
-        "value": {
-            "type": "oauth2Info",
-            "oauth2Info": {
-                "browserAuthFlowPath": "airable:oauth?oauthType=browser?url=https://8448239770.airable.io/amazon/oauth\\?code\\=:code:&state\\=[STATE_PARAMETER_STRING]&return\\=:return:",
-                "loggedIn": false
-            }
-        }
-    }
-    ```
+**`pollQueue`レスポンスボディ例**:
 
-### 1.3. ステップ2：ユーザーによるブラウザ認証
-
-1.  ステップ1で取得した`browserAuthFlowPath`内のURL部分を抜き出します。
-    `https://8448239770.airable.io/amazon/oauth?code=:code:&state=[STATE_PARAMETER_STRING]`
-2.  このURLをWebブラウザで開き、Amazonアカウントでログイン（2要素認証含む）を完了させます。
-
-### 1.4. ステップ3：認証コードの取得
-
-ログインに成功すると、ブラウザはAirableのサーバーにリダイレクトされ、画面にJSON配列形式で認証コードが表示されます。
-
-  * **リダイレクト先のURL**: `https://8448239770.airable.io/amazon/oauth?code=[取得した認証コード]&scope=...&state=[STATE_PARAMETER_STRING]`
-  * **画面に表示される内容**:
-    ```json
-    ["success", "[取得した認証コード]", "[STATE_PARAMETER_STRING]"]
-    ```
-
-この\*\*`[取得した認証コード]`\*\*が、一度しか使えない一時的なものです。
-
-### 1.5. ステップ4：トークン交換の完了
-
-取得した認証コードを、ステップ1で得られた`appAuthFlowPath`に埋め込み、APIを呼び出すことでログインが完了します。このAPI呼び出しにより、スピーカー・Airableサービス側で永続的なリフレッシュトークンが保存されます。
-
------
-
-## 2\. 音楽再生フロー
-
-ログインが完了している状態であれば、以下の手順で任意のプレイリストの曲を再生できます。
-
-### 2.1. ステップ1：再生したい曲の「完全な情報」を取得
-
-1.  **プレイリスト一覧の取得**: `getRows`で目的のプレイリストが含まれるメニューにアクセスします。
-2.  **曲リストの取得**: 1の応答からプレイリストの`path`を抜き出し、再度`getRows`で曲のリストを取得します。
-3.  **曲の単体情報（完全版）の取得**: 2で取得した曲リストから、再生したい曲の`path`を抜き出し、`getData`でその曲単体の完全な情報を取得します。これが再生命令で必要となる`ApiRoles`オブジェクトです。
-
-### 2.2. ステップ2：再生の実行
-
-1.  **キューのクリア（任意）**: 新しい曲を再生する前に、現在の再生キューをクリアします。
-
-      * **Endpoint**: `POST /api/setData`
-      * **Body**: `{"path":"playlists:pl/clear", "role":"activate", "value":{"plid":0}}`
-
-2.  **曲のキュー追加**: 2.1で取得した**完全な曲情報**を**一つのJSON文字列に変換**し、`nsdkRoles`の値としてキューに追加します。
-
-      * **Endpoint**: `POST /api/setData`
-      * **Body (構造)**:
-        ```json
-        {
-            "path": "playlists:pl/addexternalitems",
-            "role": "activate",
-            "value": {
-                "plid": 0,
-                "items": [{
-                    "nsdkRoles": "{\"title\":\"曲名\", \"type\":\"audio\", ...}" // 完全な曲情報をJSON文字列化したもの
-                }],
-                "mode": "2"
-            }
-        }
-        ```
-
-3.  **再生の開始**: 最後に、再生を命令します。この際、再生する曲の情報(`trackRoles`)と、それが属するコンテナの情報(`mediaRoles`)を合わせて送信します。
-
-      * **Endpoint**: `POST /api/setData`
-      * **Body (構造)**:
-        ```json
-        {
-            "path": "player:player/control",
-            "role": "activate",
-            "value": {
-                "control": "play",
-                "index": 0,
-                "startPaused": false,
-                "mediaRoles": { "...": "..." }, // プレイリストのコンテキスト情報
-                "trackRoles": { "...": "..." }  // 完全な曲情報のJSONオブジェクト
-            }
-        }
-        ```
-
------
-
-## Appendix A: Python実装サンプル
-
-上記フローを実装したPythonスクリプトの最終版です。
-
-```python
-import requests
-import json
-import time
-import urllib.parse
-
-# --- 設定項目 ---
-SPEAKER_IP = "192.168.0.XXX" # あなたのスピーカーのIPアドレス
-BASE_URL = f"http://{SPEAKER_IP}/api"
-# 起点となるメニューのPath (例: 「人気ランキング」)
-# このPathは、再生したいプレイリストに応じてキャプチャし、変更する必要があります。
-MENU_PATH = "airable:https%3A%2F%2F8448239770.airable.io%2Famazon%2Fdocument%2FWyJodHRwczpcL1wvbXVzaWMtYXBpLmFtYXpvbi5jb21cL2NhdGFsb2dcL3BvcHVsYXJcLyNjYXRhbG9nX3BvcHVsYXJfZGVzYyJd"
-
-def set_data(payload: dict):
-    """スピーカーにPOSTリクエスト(setData)を送信する関数"""
-    try:
-        response = requests.post(f"{BASE_URL}/setData", json=payload, timeout=10)
-        response.raise_for_status()
-        print(f"  -> setData成功: {response.text}")
-        return response.json()
-    except requests.exceptions.RequestException as e:
-        print(f"  -> setDataエラー: {e}")
-        return None
-
-# --- メイン処理 ---
-if __name__ == "__main__":
-    
-    # --- ステップ1: 「人気の楽曲」プレイリストのPathを取得 ---
-    print("--- ステップ1: 「人気の楽曲」プレイリストのPathを取得します ---")
-    songs_playlist_path = None
-    try:
-        get_menu_url = f"{BASE_URL}/getRows?path={MENU_PATH}&roles=%40all&from=0&to=20"
-        response = requests.get(get_menu_url, timeout=10)
-        response.raise_for_status()
-        menu_data = response.json()
-        
-        for item in menu_data.get("rows", []):
-            if item.get("title") == "人気の楽曲":
-                songs_playlist_path = item.get("path")
-                break
-        
-        if not songs_playlist_path:
-            raise ValueError("メニュー内に「人気の楽曲」プレイリストが見つかりませんでした。")
-        
-        print(f" -> 「人気の楽曲」のPathを発見しました。")
-
-    except (requests.exceptions.RequestException, ValueError) as e:
-        print(f"プレイリストPathの取得に失敗しました: {e}")
-        exit()
-
-    # --- ステップ2: プレイリストを開き、最初の曲のPathを取得 ---
-    print("\n--- ステップ2: 最初の曲のPathを取得します ---")
-    first_track_path = None
-    try:
-        encoded_playlist_path = urllib.parse.quote(songs_playlist_path, safe='/:')
-        get_tracks_url = f"{BASE_URL}/getRows?path={encoded_playlist_path}&roles=%40all&from=0&to=5"
-        response = requests.get(get_tracks_url, timeout=10)
-        response.raise_for_status()
-        track_data = response.json()
-        tracks = track_data.get("rows", [])
-
-        if not tracks or "path" not in tracks[0]:
-            raise ValueError("プレイリストに曲が見つからないか、曲のPathがありません。")
-            
-        first_track_path = tracks[0].get("path")
-        print(f" -> 曲「{tracks[0].get('title')}」のPathを取得しました。")
-
-    except (requests.exceptions.RequestException, ValueError) as e:
-        print(f"曲リストの取得に失敗しました: {e}")
-        exit()
-
-    # --- ステップ3: 曲のPathを使い、完全な再生情報をgetDataで取得 ---
-    print("\n--- ステップ3: 曲の完全な再生情報を取得します ---")
-    full_track_info = None
-    try:
-        encoded_track_path = urllib.parse.quote(first_track_path, safe='/:')
-        get_track_info_url = f"{BASE_URL}/getData?path={encoded_track_path}&roles=%40all"
-        response = requests.get(get_track_info_url, timeout=10)
-        response.raise_for_status()
-        full_track_info = response.json()[0] 
-        print(f" -> 完全な再生情報を取得しました。")
-
-    except (requests.exceptions.RequestException, IndexError, KeyError) as e:
-        print(f"曲の完全な情報の取得に失敗しました: {e}")
-        exit()
-
-    # --- ステップ4: キューのクリアと追加 ---
-    print("\n--- ステップ4: キューをクリアし、曲を追加します ---")
-    set_data({"path": "playlists:pl/clear", "role": "activate", "value": {"plid": 0}})
-    time.sleep(1)
-    
-    nsdk_roles_string = json.dumps(full_track_info)
-    add_payload = {
-        "path": "playlists:pl/addexternalitems", "role": "activate",
-        "value": {"plid": 0, "items": [{"nsdkRoles": nsdk_roles_string}], "mode": "2"}
-    }
-    set_data(add_payload)
-    time.sleep(3)
-
-    # --- ステップ5: 再生を開始 ---
-    print("\n--- ステップ5: 再生を開始します ---")
-    media_roles = {
-        "title": "PlayQueue tracks", "type": "container", "containerType": "none",
-        "path": "playlists:pq/getitems",
-        "mediaData": {"metaData": {"playLogicPath": "playlists:playlogic"}}
-    }
-    
-    play_payload = {
-        "path": "player:player/control", "role": "activate",
-        "value": {
-            "control": "play", "index": 0, "startPaused": False,
-            "mediaRoles": media_roles,
-            "trackRoles": full_track_info 
-        }
-    }
-    set_data(play_payload)
-
-    print("\n--- 完了 ---")
+```json
+[
+  {
+    "itemType": "update",
+    "path": "player:volume",
+    "itemValue": {"type": "i32_", "i32_": 35}
+  }
+]
 ```
