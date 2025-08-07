@@ -4,8 +4,6 @@
 
 本文書は、KEF LSX II ネットワークスピーカーを外部プログラムから制御するためのHTTP/JSON API仕様を解説するものです。
 
-このAPIは、音楽サービスの閲覧、再生制御、スピーカーの各種設定変更など、アプリケーション開発に必要な機能を提供します。
-
 *注: スピーカーにはハードウェアを直接制御する低レベルなバイナリTCP API（ポート50001）も存在しますが、本文書で解説するHTTP APIがその全機能をカバーしており、より柔軟な制御が可能であるため、低レベルAPIに関する説明は割愛します。*
 
 ### APIエンドポイントリファレンス
@@ -122,6 +120,8 @@
 | **マスターチャンネル** | `settings:/kef/host/masterChannelMode` | `kefMasterChannelMode` ("left" or "right") |
 | **USB充電** | `settings:/kef/host/usbCharging` | `bool_` |
 | **サブウーファー常時ON** | `settings:/kef/host/subwooferForceOn` | `bool_` |
+| **KW1サブウーファー強制ON** | `settings:/kef/host/subwooferForceOnKW1` | `bool_` |
+| **アプリ解析無効化** | `settings:/kef/host/disableAppAnalytics` | `bool_` |
 
 ### 1.3 DSP/EQ（音質）設定
 
@@ -146,6 +146,11 @@
 | **サブウーファーゲイン** | `settings:/kef/dsp/v2/subwooferGain` | `i32_` (dB) |
 | **サブウーファー極性** | `settings:/kef/dsp/v2/subwooferPolarity`| `string_` ("normal", "inverted") |
 | **サブウーファーLP周波数**| `settings:/kef/dsp/v2/subOutLPFreq` | `double_` (Hz) |
+| **サブウーファー数** | `settings:/kef/dsp/v2/subwooferCount` | `i32_` (0, 1, or 2) |
+| **サブウーファープリセット**| `settings:/kef/dsp/v2/subwooferPreset` | `string_` |
+| **KW1接続** | `settings:/kef/dsp/v2/isKW1` | `bool_` |
+| **音声極性** | `settings:/kef/dsp/v2/audioPolarity` | `string_` ("normal", "inverted") |
+| **ダイアログモード** | `settings:/kef/dsp/v2/dialogueMode` | `bool_` |
 
 ### 1.4 プレイヤーとシステム情報の取得
 
@@ -156,13 +161,16 @@
 | **現在再生中の情報** | `player:player/data` | `getData` | 曲、状態、制御オプションなどを含む詳細なJSONを返す |
 | **再生時間** | `player:player/data/playTime`| `getData` | 現在の再生時間（ミリ秒）を返す |
 | **現在の音量** | `player:volume` | `getData` | 現在の音量を返す (0-100の整数) |
+| **現在のミュート状態**|`settings:/mediaPlayer/mute`|`getData`|ミュート状態を返す (`bool_`)|
 | **MACアドレス**| `settings:/system/primaryMacAddress` | `getData` | プライマリMACアドレスを取得 |
 | **ファームウェアバージョン**| `settings:/version` | `getData` | ファームウェアのバージョン文字列を取得 |
-| **モデル名** | `settings:/kef/host/modelName`| `getData` | スピーカーのモデル名を取得 (例: "SP4041") |
+| **リリース情報** | `settings:/releasetext` | `getData` | リリース情報を取得 |
+| **モデル名** | `settings:/kef/host/modelName`| `getData` | スピーカーのモデル名を取得 |
 | **シリアル番号** | `settings:/kef/host/serialNumber`| `getData` | シリアル番号を取得 |
-| **電源状態** | `settings:/kef/host/speakerStatus`| `getData` | 電源状態を取得 (例: "powerOn") |
+| **電源状態** | `settings:/kef/host/speakerStatus`| `getData` | 電源状態を取得 |
 | **アラーム/タイマー** | `alerts:/list` | `getData` | 設定されているアラームやタイマーの一覧を取得 |
 | **FW更新情報**| `kef:fwupgrade/info` | `getData` | ファームウェア更新の状態や進捗を取得 |
+| **現在の入力ソース** | `settings:/kef/play/physicalSource` | `getData` | 現在の物理入力ソースを取得 |
 
 ### 1.5 イベント通知
 
