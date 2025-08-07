@@ -1,8 +1,23 @@
 # KEF LSX II ネットワークスピーカー 外部コントロールAPI仕様
 
-## はじめに：このAPI仕様書を正しく理解するために
+## 近道
 
-アプリケーションを正しく実装するためには、まず以下の重要な特性を理解することが不可欠です。
+1. `get_playlist.py` の以下の行を修正：
+
+   ```python
+   SPEAKER_IP = "192.168.0.XX"
+````
+
+2. 修正後、スクリプトを実行し、ログからプレイリストの URL を取得。
+
+3. `play_playlist.py` の以下の部分を修正：
+
+   ```python
+   SPEAKER_IP = "192.168.0.XXXX"
+   PLAYLIST_PATH = "airable:https://8448239770.airable.io/amazon/playlist/XXXXXXXXX"
+   ```
+
+4. 修正後、`play_playlist.py` を実行すれば、音楽が再生される。
 
 ### 1\. 最も重要な概念：「要約情報」と「完全な情報」の使い分け
 
