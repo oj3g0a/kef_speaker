@@ -50,13 +50,13 @@
 
 ### APIエンドポイントリファレンス
 
-| APIエンドポイント | HTTPメソッド | 役割 |
-| :--- | :--- | :--- |
-| `GET /api/getRows` | `GET` | メニューや曲の**一覧（要約情報）を取得します。 |
-| `GET /api/getData` | `GET` | 単一項目の**詳細（完全な情報）\*\*や現在の設定値を取得します。 |
-| `POST /api/setData` | `POST` | 再生や設定変更などのアクションを命令します。 |
-| `POST /api/event/modifyQueue` | `POST` | サーバーからのイベント通知を購読するために使用します。 |
-| `GET /api/event/pollQueue` | `GET` | 購読したイベントの更新情報を受信します。 |
+| APIエンドポイント         | HTTPメソッド | 役割                                                         |
+| :-------------------------- | :----------- | :----------------------------------------------------------- |
+| `GET /api/getRows`          | `GET`        | メニューや曲の**一覧（要約情報）を取得します。               |
+| `GET /api/getData`          | `GET`        | 単一項目の**詳細（完全な情報）**や現在の設定値を取得します。   |
+| `POST /api/setData`         | `POST`       | 再生や**設定変更**などのアクションを命令します。               |
+| `POST /api/event/modifyQueue` | `POST`       | サーバーからの**イベント通知を購読**するために使用します。     |
+| `GET /api/event/pollQueue`  | `GET`        | 購読したイベントの**更新情報を受信\*\*します。                   |
 
 -----
 
@@ -67,61 +67,115 @@
 #### **【最重要】再生フロー概要**
 
 1.  **【要約情報の取得】**: `getRows` を使い、再生したい曲の\*\*「要約情報」\*\*とその`path`を取得します。
-2.  **【キューへの追加】**: `setData` で `playlists:pl/addexternalitems` を呼び出し、\*\*「要約情報」\*\*を使って再生キューに曲を追加します。
-3.  **【完全な情報の取得】**: ステップ1で取得した`path`を使い、`getData`を呼び出して、再生命令に必要な\*\*「完全な情報」\*\*を取得します。
-4.  **【再生の命令】**: `setData` で `player:player/control` を呼び出し、\*\*「完全な情報」\*\*を使って再生を開始します。
+2.  **【完全な情報の取得】**: ステップ1で取得した`path`を使い、`getData`を呼び出して、再生命令に必要な\*\*「完全な情報」\*\*を取得します。
+3.  **【キューへの追加】**: `setData` で `playlists:pl/addexternalitems` を呼び出し、ステップ1で得た\*\*「要約情報」\*\*を使って再生キューに曲を追加します。
+4.  **【再生の命令】**: `setData` で `player:player/control` を呼び出し、ステップ2で得た\*\*「完全な情報」\*\*を使って再生を開始します。
 
 #### **ステップ1: `getRows`による【要約情報】の取得**
 
 まず、再生したい曲が含まれるプレイリストなどの具体的な`path`を使い、`getRows`を呼び出します。
 
   * **API**: `GET /api/getRows`
-  * **Pathの例**: `airable:https://.../playlist/[Playlist_ID]`
+  * **必須パラメータ**:
+      * `path`: プレイリスト等のパス (例: `airable:...`)
+      * `roles`: `@all` （全ての情報を要求する固定値）
+      * `from`: `0` （リストの取得開始位置）
+      * `to`: `29` （リストの取得終了位置、例: 30件取得）
+  * **完全なリクエスト例**: `GET /api/getRows?path=...&roles=@all&from=0&to=29`
   * **目的**: プレイリスト内の曲の一覧（**要約情報**）を取得する。
-  * **応答例 (`rows`配列内)**:
-    ```json
-    {
-      "type": "audio",
-      "path": "airable:https://.../track/[Track_ID_1]",
-      "title": "曲名A",
-      "subTitle": "アーティストA"
-    }
-    ```
-    *このオブジェクト全体が*\*\*「要約情報」\*\**です。*
-    *`path`の値はステップ3で使います。*
 
-#### **ステップ2: `setData`によるキューへの追加**
+**応答例 (`rows`配列内)**:
 
-次に、`setData`を使い、\*\*「要約情報」\*\*を再生キューに追加します。
+```json
+{
+  "type": "audio",
+  "path": "airable:https://.../track/[Track_ID_1]",
+  "title": "曲名A",
+  "subTitle": "アーティストA"
+}
+```
+
+*このオブジェクト全体が*\*\*「要約情報」\*\**です。*
+*`path`の値はステップ2で使います。*
+
+-----
+
+#### **ステップ2: `getData`による【完全な情報】の取得**
+
+次に、ステップ1で取得した曲の`path`を使い、`getData`を呼び出します。
+
+  * **API**: `GET /api/getData`
+  * **必須パラメータ**:
+      * `path`: 曲のパス（ステップ1で取得したもの）
+      * `roles`: `@all` （全ての情報を要求する固定値）
+  * **完全なリクエスト例**: `GET /api/getData?path=...&roles=@all`
+  * **目的**: 再生命令で必要となる\*\*「完全な情報」\*\*を取得する。
+
+**応答例**:
+
+```json
+{
+  "type": "audio",
+  "path": "playlists:item/1",
+  "title": "曲名A",
+  "mediaData": {
+    "resources": [
+      { "uri": "https://.../stream_url", "..." }
+    ],
+    "metaData": { "artist": "アーティストA", "..." }
+  }
+}
+```
+
+*このオブジェクト全体が*\*\*「完全な情報」\*\**です。*
+*`mediaData.resources`に再生用URLが含まれていることが、再生可能なトラックであることの証明です。*
+
+-----
+
+#### **ステップ3: `setData`によるキューへの追加**
+
+必要な情報が全て揃ったら、`setData`を使い、\*\*「要約情報」\*\*を再生キューに追加します。
 
   * **API**: `POST /api/setData`
   * **Path**: `playlists:pl/addexternalitems`
   * **重要なルール**: `value`に指定する`items`の中には、ステップ1で取得した\*\*「要約情報」オブジェクトをJSON文字列に変換したもの\*\*を`nsdkRoles`キーで渡します。
-  * **リクエストボディ例**:
-    ```json
-    {
-      "path": "playlists:pl/addexternalitems",
-      "role": "activate",
-      "value": {
-        "items": [
-          {
-            "nsdkRoles": "{\"type\":\"audio\",\"path\":\"airable:https://.../track/[Track_ID_1]\",\"title\":\"曲名A\",\"subTitle\":\"アーティストA\"}"
-          }
-        ]
+
+**リクエストボディ例**:
+
+```json
+{
+  "path": "playlists:pl/addexternalitems",
+  "role": "activate",
+  "value": {
+    "items": [
+      {
+        "nsdkRoles": "{\"type\":\"audio\",\"path\":\"airable:https://.../track/[Track_ID_1]\",\"title\":\"曲名A\",\"subTitle\":\"アーティストA\"}"
       }
-    }
-    ```
+    ]
+  }
+}
+```
 
-#### **ステップ3: `getData`による【完全な情報】の取得**
+-----
 
-再生を命令する**直前**に、ステップ1で取得した曲の`path`を使い、`getData`を呼び出します。
+#### **ステップ4: `setData`による再生命令**
 
-  * **API**: `GET /api/getData`
-  * **Path**: `airable:https://.../track/[Track_ID_1]` (ステップ1で取得したもの)
-  * **目的**: 再生命令で必要となる\*\*「完全な情報」\*\*を取得する。
-  * **応答例**:
-    ```json
-    {
+最後に、`setData`で再生を命令します。
+
+  * **API**: `POST /api/setData`
+  * **Path**: `player:player/control`
+  * **重要なルール**: `value`の中の`trackRoles`キーには、**ステップ2で取得した「完全な情報」オブジェクト**を渡します。
+
+**リクエストボディ例**:
+
+```json
+{
+  "path": "player:player/control",
+  "role": "activate",
+  "value": {
+    "control": "play",
+    "index": 0,
+    "trackRoles": {
       "type": "audio",
       "path": "playlists:item/1",
       "title": "曲名A",
@@ -131,52 +185,20 @@
         ],
         "metaData": { "artist": "アーティストA", "..." }
       }
-    }
-    ```
-    *このオブジェクト全体が*\*\*「完全な情報」\*\**です。*
-    *`mediaData.resources`に再生用URLが含まれていることが、再生可能なトラックであることの証明です。*
-
-#### **ステップ4: `setData`による再生命令**
-
-最後に、`setData`で再生を命令します。
-
-  * **API**: `POST /api/setData`
-  * **Path**: `player:player/control`
-  * **重要なルール**: `value`の中の`trackRoles`キーには、**ステップ3で取得した「完全な情報」オブジェクト**を渡します。
-  * **リクエストボディ例**:
-    ```json
-    {
-      "path": "player:player/control",
-      "role": "activate",
-      "value": {
-        "control": "play",
-        "index": 0,
-        "trackRoles": {
-          "type": "audio",
-          "path": "playlists:item/1",
-          "title": "曲名A",
-          "mediaData": {
-            "resources": [
-              { "uri": "https://.../stream_url", "..." }
-            ],
-            "metaData": { "artist": "アーティストA", "..." }
-          }
-        },
-        "mediaRoles": {
-          "type": "container",
-          "path": "playlists:pq/getitems",
-          "mediaData": { "metaData": { "playLogicPath": "playlists:playlogic" } },
-          "title": "PlayQueue tracks"
-        },
-        "shuffle": false,
-        "repeatMode": "Off"
-      }
-    }
-    ```
+    },
+    "mediaRoles": {
+      "type": "container",
+      "path": "playlists:pq/getitems",
+      "mediaData": { "metaData": { "playLogicPath": "playlists:playlogic" } },
+      "title": "PlayQueue tracks"
+    },
+    "shuffle": false,
+    "repeatMode": "Off"
+  }
+}
+```
 
 -----
-
-*(以降のセクション 1.2〜1.6 は、内容に問題がなかったため、元のドキュメントから変更ありません)*
 
 ### 1.2 スピーカーの一般設定
 
@@ -207,6 +229,8 @@
 | **KW1サブウーファー強制ON** | `settings:/kef/host/subwooferForceOnKW1`| `{"type":"bool_","bool_":true}` |
 | **アプリ解析無効化** | `settings:/kef/host/disableAppAnalytics` | `{"type":"bool_","bool_":true}` |
 
+-----
+
 ### 1.3 DSP/EQ（音質）設定
 
 スピーカーの音質を詳細に調整します。設定項目の一覧は`getRows`で取得し、各項目の値は`getData`/`setData`で個別に操作します。
@@ -235,6 +259,8 @@
 | **音声極性** | `settings:/kef/dsp/v2/audioPolarity` | `{"type":"string_","string_":"inverted"}`|
 | **ダイアログモード** | `settings:/kef/dsp/v2/dialogueMode`| `{"type":"bool_","bool_":true}` |
 
+-----
+
 ### 1.4 プレイヤーとシステム情報の取得
 
 主に`getData`を使用し、再生中の状態やシステム情報を取得します。
@@ -253,6 +279,8 @@
 | **アラーム/タイマー** | `alerts:/list` | `getData` | 設定されているアラームやタイマーの一覧を取得 |
 | **FW更新情報**| `kef:fwupgrade/info` | `getData` | ファームウェア更新の状態や進捗を取得 |
 | **現在の入力ソース** | `settings:/kef/play/physicalSource` | `getData` | 現在の物理入力ソースを取得 |
+
+-----
 
 ### 1.5 イベント通知システム
 
@@ -279,6 +307,31 @@
 }
 ```
 
+**`modifyQueue`レスポンスボディ**:
+
+```
+"{1b3d66ba-748c-4bb1-a0b8-4517e39bc8c7}"
+```
+
+**`pollQueue`レスポンスボディ (イベント発生時)**:
+
+```json
+[
+  {
+    "itemType": "update",
+    "path": "player:volume",
+    "itemValue": {"type": "i32_", "i32_": 35}
+  },
+  {
+    "itemType": "update",
+    "path": "settings:/mediaPlayer/playMode",
+    "itemValue": {"type": "playerPlayMode", "playerPlayMode": "shuffle"}
+  }
+]
+```
+
+-----
+
 ### 1.6 エラーハンドリング
 
 API呼び出しが失敗した場合、HTTPステータスコードと、場合によってはエラーメッセージを含むJSONが返されます。
@@ -287,3 +340,14 @@ API呼び出しが失敗した場合、HTTPステータスコードと、場合�
 | :--- | :--- | :--- |
 | **404 Not Found** | リクエストされた`path`が存在しない。 | `path`のスペルミス。 |
 | **500 Internal Server Error**| スピーカー内部で処理エラーが発生した。| - `setData`の`value`オブジェクトの形式が間違っている。\<br\>- 必須のパラメータが不足している。\<br\>- スピーカーが一時的に不安定な状態にある。|
+
+**`500`エラー時のレスポンスボディ例**:
+
+```json
+{
+  "error": "Internal Server Error",
+  "message": "An unexpected error occurred"
+}
+```
+
+*(注: エラーメッセージの内容は状況により異なる場合があります)*
