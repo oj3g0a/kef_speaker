@@ -1,5 +1,49 @@
 # KEF LSX II ネットワークスピーカー 外部コントロールAPI仕様
 
+## はじめに：このAPI仕様書を正しく理解するために
+
+アプリケーションを正しく実装するためには、まず以下の重要な特性を理解することが不可欠です。
+
+### 1\. 最も重要な概念：「要約情報」と「完全な情報」の使い分け
+
+このAPIを扱う上で最も重要な点は、**2種類の「曲情報オブジェクト」が存在し、それぞれ役割が異なる**という事実です。
+
+  * **要約情報 (Summary Info)**
+
+      * **取得方法**: `GET /api/getRows`
+      * **役割**: アプリの画面にリストを表示するための、**概要のみの情報**です。図書館の**蔵書目録**に例えられます。再生に必要な全ての情報（再生用URLなど）は含まれていません。
+      * **用途**: **再生キューへの追加 (`playlists:pl/addexternalitems`)** に使用します。
+
+  * **完全な情報 (Complete Info)**
+
+      * **取得方法**: `GET /api/getData`
+      * **役割**: 曲の再生用URLなど、再生に必須の全ての情報を含んだオブジェクトです。図書館の**本そのもの**に例えられます。
+      * **用途**: **再生命令 (`player:player/control`)** に使用します。
+
+以前の資料やスクリプトが失敗した最大の原因は、この2つの情報を区別せず、「蔵書目録（要約情報）をそのまま本だと思って読もうとしていた」ことにありました。
+
+### 2\. 再生フローの罠：特殊なキュー追加の仕様
+
+再生フローの重要なステップである「再生キューへの曲追加」は、非常に特殊な形式を要求します。
+
+  * **API**: `POST /api/setData` with `path: "playlists:pl/addexternalitems"`
+  * **仕様**: `value`には `{"items": [{"nsdkRoles": "..."}]}` という特殊な構造を使います。さらに`nsdkRoles`の値には、**`getRows`で取得した「要約情報」オブジェクトをJSON文字列に変換したもの**を渡す必要があります。
+
+### 3\. コンテンツによる手順の違い
+
+本仕様書で解説する再生フローは、主に**ストリーミングサービス**（Airable, Amazon Musicなど、`airable:`で始まる`path`を持つもの）を再生するためのものです。
+
+`sources:/`から見つかるようなローカルネットワーク上の音楽ファイル（UPnP）は、全く異なる手順や情報が必要である可能性が極めて高いです。全ての音楽ソースが同じ手順で再生できると仮定すると、エラーの原因となります。
+
+### 4\. 仕様書にないAPIの挙動
+
+  * **`getData`の応答形式**: `getData` APIは、問い合わせる`path`によって、応答が単一のJSONオブジェクト `{}` の場合と、それをリストで囲んだ `[{}]` の場合があるため、クライアント側は両方の形式を処理できる必要があります。
+  * **「見かけ上の曲」の存在**: `getRows`で得られるリストの中には、`"type": "audio"`でありながら、再生に必要な`mediaData`を持たない「ショートカット」のような項目が多数含まれています。本当に再生可能か否かは、`getData`で「完全な情報」を取得し、その中に`mediaData.resources`キーが存在するかで最終的に判断する必要があります。
+
+-----
+
+以上の点を踏まえ、以下に現在判明している全ての仕様を反映したドキュメントを記載します。
+
 ## 概要
 
 本文書は、KEF LSX II ネットワークスピーカーを外部プログラムから制御するためのHTTP/JSON API仕様を網羅的に解説するものです。
@@ -10,8 +54,8 @@
 
 | APIエンドポイント | HTTPメソッド | 役割 |
 | :--- | :--- | :--- |
-| `GET /api/getRows` | `GET` | メニューや曲の**一覧**を取得します。 |
-| `GET /api/getData` | `GET` | 単一項目の**詳細情報**や**現在の設定値**を取得します。 |
+| `GET /api/getRows` | `GET` | メニューや曲の**一覧（要約情報）を取得します。 |
+| `GET /api/getData` | `GET` | 単一項目の詳細（完全な情報）や現在の設定値**を取得します。 |
 | `POST /api/setData` | `POST` | 再生や**設定変更**などのアクションを命令します。 |
 | `POST /api/event/modifyQueue` | `POST` | サーバーからの**イベント通知を購読**するために使用します。 |
 | `GET /api/event/pollQueue` | `GET` | 購読したイベントの**更新情報を受信**します。 |
@@ -20,88 +64,124 @@
 
 ## Part 1: 機能別API解説
 
-### 1.1 音楽再生とプレイリスト操作
+### 1.1 音楽再生（ストリーミングサービス）
 
-#### **フロー概要**
+#### **【最重要】再生フロー概要**
 
-1.  **閲覧**: `getRows`を再帰的に呼び出し、再生したい曲の情報（`trackRoles`として利用）を見つけます。
-2.  **準備**: `setData`で`playlists:pl/clear`を呼び出して現在の再生キューをクリアし、`playlists:pl/addexternalitems`で再生したい曲をキューに追加します。
-3.  **再生**: `setData`で`player:player/control`を呼び出し、再生を開始します。
+1.  **【要約情報の取得】**: `getRows` を使い、再生したい曲の\*\*「要約情報」\*\*とその`path`を取得します。
+2.  **【キューへの追加】**: `setData` で `playlists:pl/addexternalitems` を呼び出し、\*\*「要約情報」\*\*を使って再生キューに曲を追加します。
+3.  **【完全な情報の取得】**: ステップ1で取得した`path`を使い、`getData`を呼び出して、再生命令に必要な\*\*「完全な情報」\*\*を取得します。
+4.  **【再生の命令】**: `setData` で `player:player/control` を呼び出し、\*\*「完全な情報」\*\*を使って再生を開始します。
 
-#### **`player:player/control` による再生開始**
+#### **ステップ1: `getRows`による【要約情報】の取得**
 
-再生コマンドには、再生する曲の情報に加え、シャッフルとリピートのオプションを指定できます。
+まず、再生したい曲が含まれるプレイリストなどの具体的な`path`を使い、`getRows`を呼び出します。
 
-  - **`path`**: `player:player/control`
-  - **`role`**: `activate`
-  - **`value`の構造**:
-    ```json
-    {
-        "control": "play",
-        "index": 0,
-        "trackRoles": {
-            "type": "audio",
-            "path": "playlists:item/3",
-            "images": { "images": [ { "height": 500, "width": 500, "url": "https://m.media-amazon.com/images/I/91NiE0s9WRL.jpg" } ] },
-            "value": { "type": "i32_", "i32_": 2 },
-            "icon": "https://m.media-amazon.com/images/I/61npmR+k+mL.jpg",
-            "mediaData": {
-                "resources": [
-                    {
-                        "mimeType": "audio/flac",
-                        "uri": "https://8448239770.airable.io/amazon/play/WyJ0...",
-                        "bitsPerSample": 16,
-                        "sampleFrequency": 44100,
-                        "nrAudioChannels": 2
-                    }
-                ],
-                "metaData": {
-                    "artist": "アーティスト名",
-                    "album": "アルバム名"
-                }
-            },
-            "containerType": "none",
-            "id": "3",
-            "title": "曲名"
-        },
-        "mediaRoles": {
-            "type": "container",
-            "path": "playlists:pq/getitems",
-            "mediaData": {
-                "metaData": { "playLogicPath": "playlists:playlogic" }
-            },
-            "title": "PlayQueue tracks"
-        },
-        "shuffle": false,
-        "repeatMode": "Off"
-    }
-    ```
+  - **API**: `GET /api/getRows`
+  - **Pathの例**: `airable:https://.../playlist/[Playlist_ID]`
+  - **目的**: プレイリスト内の曲の一覧（要約情報）を取得する。
 
-#### **`settings:/mediaPlayer/playMode` による再生中モード変更**
-
-再生を中断することなく、いつでも再生モードを変更できます。
-
-  - **`path`**: `settings:/mediaPlayer/playMode`
-  - **`role`**: `value`
-  - **`value`**: 以下のいずれかの値を持つJSONオブジェクトを`setData`で送信します。
-
-| `playerPlayMode`の値 | 説明 |
-| :--- | :--- |
-| `"normal"` | 通常再生 |
-| `"shuffle"` | シャッフル |
-| `"repeatOne"` | 1曲リピート |
-| `"repeatAll"` | 全曲リピート |
-| `"shuffleRepeatAll"`| シャッフル ＋ 全曲リピート |
-
-**リクエストボディ例 (`setData`)**:
+**応答例 (`rows`配列内)**:
 
 ```json
 {
-  "path": "settings:/mediaPlayer/playMode",
-  "role": "value",
+  "type": "audio",
+  "path": "airable:https://.../track/[Track_ID_1]",
+  "title": "曲名A",
+  "subTitle": "アーティストA"
+}
+```
+
+*このオブジェクト全体が*\*「要約情報」\**です。*
+*`path`の値はステップ3で使います。*
+
+#### **ステップ2: `setData`によるキューへの追加**
+
+次に、`setData`を使い、\*\*「要約情報」\*\*を再生キューに追加します。
+
+  - **API**: `POST /api/setData`
+  - **Path**: `playlists:pl/addexternalitems`
+  - **重要なルール**: `value`に指定する`items`の中には、ステップ1で取得した\*\*「要約情報」オブジェクトをJSON文字列に変換したもの\*\*を`nsdkRoles`キーで渡します。
+
+**リクエストボディ例**:
+
+```json
+{
+  "path": "playlists:pl/addexternalitems",
+  "role": "activate",
   "value": {
-    "type": "playerPlayMode",
-    "playerPlayMode": "shuffleRepeatAll"
+    "items": [
+      {
+        "nsdkRoles": "{\"type\":\"audio\",\"path\":\"airable:https://.../track/[Track_ID_1]\",\"title\":\"曲名A\",\"subTitle\":\"アーティストA\"}"
+      }
+    ]
+  }
+}
+```
+
+#### **ステップ3: `getData`による【完全な情報】の取得**
+
+再生を命令する**直前**に、ステップ1で取得した曲の`path`を使い、`getData`を呼び出します。
+
+  - **API**: `GET /api/getData`
+  - **Path**: `airable:https://.../track/[Track_ID_1]` (ステップ1で取得したもの)
+  - **目的**: 再生命令で必要となる\*\*「完全な情報」\*\*を取得する。
+
+**応答例**:
+
+```json
+{
+  "type": "audio",
+  "path": "playlists:item/1",
+  "title": "曲名A",
+  "mediaData": {
+    "resources": [
+      { "uri": "https://.../stream_url", "..." }
+    ],
+    "metaData": { "artist": "アーティストA", "..." }
+  }
+}
+```
+
+*このオブジェクト全体が*\*「完全な情報」\**です。*
+*`mediaData.resources`に再生用URLが含まれていることが、再生可能なトラックであることの証明です。*
+
+#### **ステップ4: `setData`による再生命令**
+
+最後に、`setData`で再生を命令します。
+
+  - **API**: `POST /api/setData`
+  - **Path**: `player:player/control`
+  - **重要なルール**: `value`の中の`trackRoles`キーには、**ステップ3で取得した「完全な情報」オブジェクト**を渡します。
+
+**リクエストボディ例**:
+
+```json
+{
+  "path": "player:player/control",
+  "role": "activate",
+  "value": {
+    "control": "play",
+    "index": 0,
+    "trackRoles": {
+      "type": "audio",
+      "path": "playlists:item/1",
+      "title": "曲名A",
+      "mediaData": {
+        "resources": [
+          { "uri": "https://.../stream_url", "..." }
+        ],
+        "metaData": { "artist": "アーティストA", "..." }
+      }
+    },
+    "mediaRoles": {
+      "type": "container",
+      "path": "playlists:pq/getitems",
+      "mediaData": { "metaData": { "playLogicPath": "playlists:playlogic" } },
+      "title": "PlayQueue tracks"
+    },
+    "shuffle": false,
+    "repeatMode": "Off"
   }
 }
 ```
@@ -214,7 +294,7 @@
 "{1b3d66ba-748c-4bb1-a0b8-4517e39bc8c7}"
 ```
 
-**`pollQueue`レスポンスボディ (イベント発生時)**:
+**`pollQueue`レスポ-ンスボディ (イベント発生時)**:
 
 ```json
 [
