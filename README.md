@@ -24,7 +24,7 @@
 
 #### **フロー概要**
 
-1.  **閲覧**: `getRows`を再帰的に呼び出し、再生したい曲の情報（`trackRoles`）を見つけます。
+1.  **閲覧**: `getRows`を再帰的に呼び出し、再生したい曲の情報（`trackRoles`として利用）を見つけます。
 2.  **準備**: `setData`で`playlists:pl/clear`を呼び出して現在の再生キューをクリアし、`playlists:pl/addexternalitems`で再生したい曲をキューに追加します。
 3.  **再生**: `setData`で`player:player/control`を呼び出し、再生を開始します。
 
@@ -41,9 +41,28 @@
         "index": 0,
         "trackRoles": {
             "type": "audio",
-            "path": "airable:https://.../track/[Track_ID]",
-            "title": "曲名",
-            "...": "..."
+            "path": "playlists:item/3",
+            "images": { "images": [ { "height": 500, "width": 500, "url": "https://m.media-amazon.com/images/I/91NiE0s9WRL.jpg" } ] },
+            "value": { "type": "i32_", "i32_": 2 },
+            "icon": "https://m.media-amazon.com/images/I/61npmR+k+mL.jpg",
+            "mediaData": {
+                "resources": [
+                    {
+                        "mimeType": "audio/flac",
+                        "uri": "https://8448239770.airable.io/amazon/play/WyJ0...",
+                        "bitsPerSample": 16,
+                        "sampleFrequency": 44100,
+                        "nrAudioChannels": 2
+                    }
+                ],
+                "metaData": {
+                    "artist": "アーティスト名",
+                    "album": "アルバム名"
+                }
+            },
+            "containerType": "none",
+            "id": "3",
+            "title": "曲名"
         },
         "mediaRoles": {
             "type": "container",
@@ -87,7 +106,7 @@
 }
 ```
 
-### 1.2 スピーカーの各種設定
+### 1.2 スピーカーの一般設定
 
 `getData`で現在の値を取得し、`setData`で値を変更できます。
 
@@ -102,13 +121,7 @@
 | **音量上限の有効化** | `settings:/kef/host/volumeLimit` | `{"type":"bool_","bool_":true}` |
 | **最大音量** | `settings:/kef/host/maximumVolume`| `{"type":"i32_","i32_":80}` |
 | **音量ステップ幅** | `settings:/kef/host/volumeStep`| `{"type":"i16_","i16_":5}` |
-| **デフォルト音量(Wifi)** | `settings:/kef/host/defaultVolumeWifi`| `{"type":"i32_","i32_":25}` |
-| **デフォルト音量(TV)** | `settings:/kef/host/defaultVolumeTV`| `{"type":"i32_","i32_":30}` |
-| **デフォルト音量(Optical)**| `settings:/kef/host/defaultVolumeOptical`| `{"type":"i32_","i32_":30}` |
-| **デフォルト音量(USB)** | `settings:/kef/host/defaultVolumeUSB`| `{"type":"i32_","i32_":30}` |
-| **デフォルト音量(Coaxial)**| `settings:/kef/host/defaultVolumeCoaxial`| `{"type":"i32_","i32_":30}` |
-| **デフォルト音量(Bluetooth)**|`settings:/kef/host/defaultVolumeBluetooth`| `{"type":"i32_","i32_":30}` |
-| **デフォルト音量(Analogue)**|`settings:/kef/host/defaultVolumeAnalogue`| `{"type":"i32_","i32_":30}` |
+| **各入力のデフォルト音量** | `settings:/kef/host/defaultVolume{Source}`\<br\>(Source: Wifi, Analogue, Optical, TV, USB, Bluetooth, Coaxial, Global) | `{"type":"i32_","i32_":25}` |
 | **自動スタンバイ** | `settings:/kef/host/standbyMode` | `{"type":"kefStandbyMode","kefStandbyMode":"standby_60mins"}` |
 | **自動起動ソース** | `settings:/kef/host/wakeUpSource`| `{"type":"kefWakeUpSource","kefWakeUpSource":"tv"}` |
 | **HDMIへ自動切替** | `settings:/kef/host/autoSwitchToHDMI`| `{"type":"bool_","bool_":false}` |
@@ -124,8 +137,11 @@
 
 ### 1.3 DSP/EQ（音質）設定
 
-`getRows?path=kef:dsp/editValue`で全項目の一覧を取得後、`getData`と`setData`で個別に操作します。
+スピーカーの音質を詳細に調整します。設定項目の一覧は`getRows`で取得し、各項目の値は`getData`/`setData`で個別に操作します。
 
+**設定項目一覧の取得**: `GET /api/getRows?path=kef:dsp/editValue&roles=@all`
+
+**設定可能な項目 (`path`一覧)**:
 | 機能 | `path` | `setData`のvalueオブジェクト例 |
 | :--- | :--- | :--- |
 | **バランス** | `settings:/kef/dsp/v2/balance` | `{"type":"i32_","i32_":-5}` |
@@ -148,7 +164,26 @@
 | **音声極性** | `settings:/kef/dsp/v2/audioPolarity` | `{"type":"string_","string_":"inverted"}`|
 | **ダイアログモード** | `settings:/kef/dsp/v2/dialogueMode`| `{"type":"bool_","bool_":true}` |
 
-### 1.4 イベント通知システム
+### 1.4 プレイヤーとシステム情報の取得
+
+主に`getData`を使用し、再生中の状態やシステム情報を取得します。
+
+| 機能 | `path` | API | 説明 |
+| :--- | :--- | :--- | :--- |
+| **現在再生中の情報** | `player:player/data` | `getData` | 曲、状態、制御オプションなどを含む詳細なJSONを返す |
+| **再生時間** | `player:player/data/playTime`| `getData` | 現在の再生時間（ミリ秒）を返す |
+| **現在の音量** | `player:volume` | `getData` | 現在の音量を返す (0-100の整数) |
+| **現在のミュート状態**|`settings:/mediaPlayer/mute`|`getData`|ミュート状態を返す (`bool_`)|
+| **MACアドレス**| `settings:/system/primaryMacAddress` | `getData` | プライマリMACアドレスを取得 |
+| **ファームウェアバージョン**| `settings:/version` | `getData` | ファームウェアのバージョン文字列を取得 |
+| **リリース情報** | `settings:/releasetext` | `getData` | リリース情報を取得 |
+| **モデル名** | `settings:/kef/host/modelName`| `getData` | スピーカーのモデル名を取得 |
+| **電源状態** | `settings:/kef/host/speakerStatus`| `getData` | 電源状態を取得 |
+| **アラーム/タイマー** | `alerts:/list` | `getData` | 設定されているアラームやタイマーの一覧を取得 |
+| **FW更新情報**| `kef:fwupgrade/info` | `getData` | ファームウェア更新の状態や進捗を取得 |
+| **現在の入力ソース** | `settings:/kef/play/physicalSource` | `getData` | 現在の物理入力ソースを取得 |
+
+### 1.5 イベント通知システム
 
 スピーカーの状態変化をリアルタイムに受け取るための高度な機能です。
 
@@ -156,25 +191,27 @@
 
 1.  **購読開始**: アプリ起動時に一度だけ、`POST /api/event/modifyQueue` を呼び出し、監視したい`path`を購読(`subscribe`)します。応答として`queueId`が返されます。
 2.  **ポーリング**: `GET /api/event/pollQueue?queueId={ID}&timeout=25` をロングポーリングで呼び出し続けます。`timeout`は秒単位で、この時間内に変化がなければ空の応答が返ります。
-3.  **イベント受信**: スピーカー側で状態変化が起きると、`pollQueue`への応答として更新情報が返されます。
+3.  **イベント受信**: スピーカー側で状態変化（例：音量変更）が起きると、`pollQueue`への応答として更新情報が返されます。
 4.  **継続**: アプリは応答を受け取ったら、すぐに次の`pollQueue`リクエストを送信して監視を続けます。
 
-**`modifyQueue`リクエストボディ**:
+**`modifyQueue`リクエストボディ例**:
 
 ```json
 {
   "subscribe": [
     {"path": "player:player/data", "type": "item"},
     {"path": "player:volume", "type": "itemWithValue"},
-    {"path": "settings:/mediaPlayer/playMode", "type": "itemWithValue"}
-  ]
+    {"path": "settings:/mediaPlayer/playMode", "type": "itemWithValue"},
+    {"path": "playlists:pq/getitems", "type": "rows"}
+  ],
+  "unsubscribe": []
 }
 ```
 
 **`modifyQueue`レスポンスボディ**:
 
-```json
-"{d3474c09-4408-4aff-8bae-c06041a7925b}"
+```
+"{1b3d66ba-748c-4bb1-a0b8-4517e39bc8c7}"
 ```
 
 **`pollQueue`レスポンスボディ (イベント発生時)**:
@@ -194,7 +231,7 @@
 ]
 ```
 
-### 1.5 エラーハンドリング
+### 1.6 エラーハンドリング
 
 API呼び出しが失敗した場合、HTTPステータスコードと、場合によってはエラーメッセージを含むJSONが返されます。
 
@@ -213,7 +250,3 @@ API呼び出しが失敗した場合、HTTPステータスコードと、場合�
 ```
 
 (注: エラーメッセージの内容は状況により異なる場合があります)
-
------
-
-このドキュメントが、あなたのアプリケーション開発の確かな土台となることを願っています。
