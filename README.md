@@ -2,7 +2,7 @@
 
 ## 概要
 
-本文書は、KEF LSX II ネットワークスピーカーを外部プログラムから制御するためのHTTP/JSON API仕様を解説するものです。
+本文書は、KEF LSX II ネットワークスピーカーを外部プログラムから制御するためのHTTP/JSON API仕様を網羅的に解説するものです。
 
 *注: スピーカーにはハードウェアを直接制御する低レベルなバイナリTCP API（ポート50001）も存在しますが、本文書で解説するHTTP APIがその全機能をカバーしており、より柔軟な制御が可能であるため、低レベルAPIに関する説明は割愛します。*
 
@@ -43,20 +43,13 @@
             "type": "audio",
             "path": "airable:https://.../track/[Track_ID]",
             "title": "曲名",
-            "subTitle": "アーティスト名",
-            "mediaData": {
-                "artwork": "http://.../artwork.jpg",
-                "duration": 240
-            },
             "...": "..."
         },
         "mediaRoles": {
             "type": "container",
             "path": "playlists:pq/getitems",
             "mediaData": {
-                "metaData": {
-                    "playLogicPath": "playlists:playlogic"
-                }
+                "metaData": { "playLogicPath": "playlists:playlogic" }
             },
             "title": "PlayQueue tracks"
         },
@@ -94,110 +87,97 @@
 }
 ```
 
-### 1.2 スピーカーの一般設定
+### 1.2 スピーカーの各種設定
 
 `getData`で現在の値を取得し、`setData`で値を変更できます。
 
 **取得**: `GET /api/getData?path={path}&roles=value`
-**設定**: `POST /api/setData` with `{"path": "{path}", "role": "value", "value": {"type": "...", "...": ...}}`
+**設定**: `POST /api/setData` with `{"path": "{path}", "role": "value", "value": { ... }}`
 
-| 機能 | `path` | 値の型 (`type`) |
+| 機能 | `path` | `setData`のvalueオブジェクト例 |
 | :--- | :--- | :--- |
-| **スピーカー名** | `settings:/deviceName` | `string_` |
-| **UI言語** | `settings:/ui/language` | `string_` |
-| **Airable言語** | `settings:/airable/language` | `string_` |
-| **音量上限の有効化** | `settings:/kef/host/volumeLimit` | `bool_` |
-| **最大音量** | `settings:/kef/host/maximumVolume` | `i32_` (0-100) |
-| **音量ステップ幅** | `settings:/kef/host/volumeStep` | `i16_` |
-| **各入力のデフォルト音量** | `settings:/kef/host/defaultVolume{Source}`\<br\>(Source: Wifi, Analogue, Optical, TV, USB, Bluetooth, Coaxial, Global) | `i32_` |
-| **自動スタンバイ** | `settings:/kef/host/standbyMode` | `kefStandbyMode` |
-| **自動起動ソース** | `settings:/kef/host/wakeUpSource` | `kefWakeUpSource` |
-| **HDMIへ自動切替** | `settings:/kef/host/autoSwitchToHDMI` | `bool_` |
-| **天面パネル無効化** | `settings:/kef/host/disableTopPanel` | `bool_` |
-| **起動音** | `settings:/kef/host/startupTone` | `bool_` |
-| **スタンバイLED無効化** | `settings:/kef/host/disableFrontStandbyLED` | `bool_` |
-| **マスター/スレーブ接続** | `settings:/kef/host/cableMode` | `kefCableMode` ("wired"等) |
-| **マスターチャンネル** | `settings:/kef/host/masterChannelMode` | `kefMasterChannelMode` ("left" or "right") |
-| **USB充電** | `settings:/kef/host/usbCharging` | `bool_` |
-| **サブウーファー常時ON** | `settings:/kef/host/subwooferForceOn` | `bool_` |
-| **KW1サブウーファー強制ON** | `settings:/kef/host/subwooferForceOnKW1` | `bool_` |
-| **アプリ解析無効化** | `settings:/kef/host/disableAppAnalytics` | `bool_` |
+| **スピーカー名** | `settings:/deviceName` | `{"type":"string_","string_":"新しい名前"}` |
+| **UI言語** | `settings:/ui/language` | `{"type":"string_","string_":"ja_JP"}` |
+| **Airable言語** | `settings:/airable/language`| `{"type":"string_","string_":"ja_JP"}` |
+| **音量上限の有効化** | `settings:/kef/host/volumeLimit` | `{"type":"bool_","bool_":true}` |
+| **最大音量** | `settings:/kef/host/maximumVolume`| `{"type":"i32_","i32_":80}` |
+| **音量ステップ幅** | `settings:/kef/host/volumeStep`| `{"type":"i16_","i16_":5}` |
+| **デフォルト音量(Wifi)** | `settings:/kef/host/defaultVolumeWifi`| `{"type":"i32_","i32_":25}` |
+| **デフォルト音量(TV)** | `settings:/kef/host/defaultVolumeTV`| `{"type":"i32_","i32_":30}` |
+| **デフォルト音量(Optical)**| `settings:/kef/host/defaultVolumeOptical`| `{"type":"i32_","i32_":30}` |
+| **デフォルト音量(USB)** | `settings:/kef/host/defaultVolumeUSB`| `{"type":"i32_","i32_":30}` |
+| **デフォルト音量(Coaxial)**| `settings:/kef/host/defaultVolumeCoaxial`| `{"type":"i32_","i32_":30}` |
+| **デフォルト音量(Bluetooth)**|`settings:/kef/host/defaultVolumeBluetooth`| `{"type":"i32_","i32_":30}` |
+| **デフォルト音量(Analogue)**|`settings:/kef/host/defaultVolumeAnalogue`| `{"type":"i32_","i32_":30}` |
+| **自動スタンバイ** | `settings:/kef/host/standbyMode` | `{"type":"kefStandbyMode","kefStandbyMode":"standby_60mins"}` |
+| **自動起動ソース** | `settings:/kef/host/wakeUpSource`| `{"type":"kefWakeUpSource","kefWakeUpSource":"tv"}` |
+| **HDMIへ自動切替** | `settings:/kef/host/autoSwitchToHDMI`| `{"type":"bool_","bool_":false}` |
+| **天面パネル無効化** | `settings:/kef/host/disableTopPanel`| `{"type":"bool_","bool_":true}` |
+| **起動音** | `settings:/kef/host/startupTone` | `{"type":"bool_","bool_":true}` |
+| **スタンバイLED無効化** |`settings:/kef/host/disableFrontStandbyLED`| `{"type":"bool_","bool_":false}` |
+| **マスター/スレーブ接続** | `settings:/kef/host/cableMode` | `{"type":"kefCableMode","kefCableMode":"wired"}` |
+| **マスターチャンネル** | `settings:/kef/host/masterChannelMode`| `{"type":"kefMasterChannelMode","kefMasterChannelMode":"left"}`|
+| **USB充電** | `settings:/kef/host/usbCharging` | `{"type":"bool_","bool_":true}` |
+| **サブウーファー常時ON** | `settings:/kef/host/subwooferForceOn`| `{"type":"bool_","bool_":true}` |
+| **KW1サブウーファー強制ON** | `settings:/kef/host/subwooferForceOnKW1`| `{"type":"bool_","bool_":true}` |
+| **アプリ解析無効化** | `settings:/kef/host/disableAppAnalytics` | `{"type":"bool_","bool_":true}` |
 
 ### 1.3 DSP/EQ（音質）設定
 
-スピーカーの音質を詳細に調整します。設定項目の一覧は`getRows`で取得し、各項目の値は`getData`/`setData`で個別に操作します。
+`getRows?path=kef:dsp/editValue`で全項目の一覧を取得後、`getData`と`setData`で個別に操作します。
 
-**設定項目一覧の取得**: `GET /api/getRows?path=kef:dsp/editValue&roles=@all`
-
-**設定可能な項目 (`path`一覧)**:
-| 機能 | `path` | 値の型 (`type`) |
+| 機能 | `path` | `setData`のvalueオブジェクト例 |
 | :--- | :--- | :--- |
-| **バランス** | `settings:/kef/dsp/v2/balance` | `i32_` |
-| **デスクモード ON/OFF** | `settings:/kef/dsp/v2/deskMode` | `bool_` |
-| **デスクモード補正値** | `settings:/kef/dsp/v2/deskModeSetting` | `double_` (dB) |
-| **壁モード ON/OFF** | `settings:/kef/dsp/v2/wallMode` | `bool_` |
-| **壁モード補正値** | `settings:/kef/dsp/v2/wallModeSetting` | `double_` (dB) |
-| **高音調整** | `settings:/kef/dsp/v2/trebleAmount` | `double_` (dB) |
-| **低音拡張** | `settings:/kef/dsp/v2/bassExtension` | `string_` ("standard", "extra", "less") |
-| **位相補正** | `settings:/kef/dsp/v2/phaseCorrection` | `bool_` |
-| **サブウーファー出力** | `settings:/kef/dsp/v2/subwooferOut` | `bool_` |
-| **ハイパス ON/OFF** | `settings:/kef/dsp/v2/highPassMode` | `bool_` |
-| **ハイパス周波数** | `settings:/kef/dsp/v2/highPassModeFreq` | `double_` (Hz) |
-| **サブウーファーゲイン** | `settings:/kef/dsp/v2/subwooferGain` | `i32_` (dB) |
-| **サブウーファー極性** | `settings:/kef/dsp/v2/subwooferPolarity`| `string_` ("normal", "inverted") |
-| **サブウーファーLP周波数**| `settings:/kef/dsp/v2/subOutLPFreq` | `double_` (Hz) |
-| **サブウーファー数** | `settings:/kef/dsp/v2/subwooferCount` | `i32_` (0, 1, or 2) |
-| **サブウーファープリセット**| `settings:/kef/dsp/v2/subwooferPreset` | `string_` |
-| **KW1接続** | `settings:/kef/dsp/v2/isKW1` | `bool_` |
-| **音声極性** | `settings:/kef/dsp/v2/audioPolarity` | `string_` ("normal", "inverted") |
-| **ダイアログモード** | `settings:/kef/dsp/v2/dialogueMode` | `bool_` |
+| **バランス** | `settings:/kef/dsp/v2/balance` | `{"type":"i32_","i32_":-5}` |
+| **デスクモード ON/OFF** | `settings:/kef/dsp/v2/deskMode` | `{"type":"bool_","bool_":true}` |
+| **デスクモード補正値** | `settings:/kef/dsp/v2/deskModeSetting`| `{"type":"double_","double_":-2.5}` |
+| **壁モード ON/OFF** | `settings:/kef/dsp/v2/wallMode` | `{"type":"bool_","bool_":false}` |
+| **壁モード補正値** | `settings:/kef/dsp/v2/wallModeSetting`| `{"type":"double_","double_":-6.0}` |
+| **高音調整** | `settings:/kef/dsp/v2/trebleAmount` | `{"type":"double_","double_":1.5}` |
+| **低音拡張** | `settings:/kef/dsp/v2/bassExtension` | `{"type":"string_","string_":"extra"}` |
+| **位相補正** | `settings:/kef/dsp/v2/phaseCorrection`| `{"type":"bool_","bool_":false}` |
+| **サブウーファー出力** | `settings:/kef/dsp/v2/subwooferOut` | `{"type":"bool_","bool_":false}` |
+| **ハイパス ON/OFF** | `settings:/kef/dsp/v2/highPassMode` | `{"type":"bool_","bool_":true}` |
+| **ハイパス周波数** | `settings:/kef/dsp/v2/highPassModeFreq`| `{"type":"double_","double_":80.0}`|
+| **サブウーファーゲイン** | `settings:/kef/dsp/v2/subwooferGain`| `{"type":"i32_","i32_":2}` |
+| **サブウーファー極性** | `settings:/kef/dsp/v2/subwooferPolarity`|`{"type":"string_","string_":"inverted"}`|
+| **サブウーファーLP周波数**| `settings:/kef/dsp/v2/subOutLPFreq` | `{"type":"double_","double_":100.0}`|
+| **サブウーファー数** | `settings:/kef/dsp/v2/subwooferCount` | `{"type":"i32_","i32_":1}` |
+| **サブウーファープリセット**| `settings:/kef/dsp/v2/subwooferPreset` | `{"type":"string_","string_":"kc62"}`|
+| **KW1接続** | `settings:/kef/dsp/v2/isKW1` | `{"type":"bool_","bool_":true}` |
+| **音声極性** | `settings:/kef/dsp/v2/audioPolarity` | `{"type":"string_","string_":"inverted"}`|
+| **ダイアログモード** | `settings:/kef/dsp/v2/dialogueMode`| `{"type":"bool_","bool_":true}` |
 
-### 1.4 プレイヤーとシステム情報の取得
+### 1.4 イベント通知システム
 
-主に`getData`を使用し、再生中の状態やシステム情報を取得します。
-
-| 機能 | `path` | API | 説明 |
-| :--- | :--- | :--- | :--- |
-| **現在再生中の情報** | `player:player/data` | `getData` | 曲、状態、制御オプションなどを含む詳細なJSONを返す |
-| **再生時間** | `player:player/data/playTime`| `getData` | 現在の再生時間（ミリ秒）を返す |
-| **現在の音量** | `player:volume` | `getData` | 現在の音量を返す (0-100の整数) |
-| **現在のミュート状態**|`settings:/mediaPlayer/mute`|`getData`|ミュート状態を返す (`bool_`)|
-| **MACアドレス**| `settings:/system/primaryMacAddress` | `getData` | プライマリMACアドレスを取得 |
-| **ファームウェアバージョン**| `settings:/version` | `getData` | ファームウェアのバージョン文字列を取得 |
-| **リリース情報** | `settings:/releasetext` | `getData` | リリース情報を取得 |
-| **モデル名** | `settings:/kef/host/modelName`| `getData` | スピーカーのモデル名を取得 |
-| **シリアル番号** | `settings:/kef/host/serialNumber`| `getData` | シリアル番号を取得 |
-| **電源状態** | `settings:/kef/host/speakerStatus`| `getData` | 電源状態を取得 |
-| **アラーム/タイマー** | `alerts:/list` | `getData` | 設定されているアラームやタイマーの一覧を取得 |
-| **FW更新情報**| `kef:fwupgrade/info` | `getData` | ファームウェア更新の状態や進捗を取得 |
-| **現在の入力ソース** | `settings:/kef/play/physicalSource` | `getData` | 現在の物理入力ソースを取得 |
-
-### 1.5 イベント通知
-
-アプリは`event` APIを利用して、スピーカーの状態変化をリアルタイムに受け取ることができます。
+スピーカーの状態変化をリアルタイムに受け取るための高度な機能です。
 
 **フロー**:
 
-1.  `POST /api/event/modifyQueue` を呼び出し、監視したい`path`を購読(`subscribe`)します。
-2.  `GET /api/event/pollQueue?queueId={ID}` をロングポーリングで呼び出し続けます。
-3.  スピーカー側で状態変化（例：音量変更）が起きると、`pollQueue`への応答として更新情報が返されます。
-4.  アプリは応答を受け取ったら、すぐに次の`pollQueue`リクエストを送信します。
+1.  **購読開始**: アプリ起動時に一度だけ、`POST /api/event/modifyQueue` を呼び出し、監視したい`path`を購読(`subscribe`)します。応答として`queueId`が返されます。
+2.  **ポーリング**: `GET /api/event/pollQueue?queueId={ID}&timeout=25` をロングポーリングで呼び出し続けます。`timeout`は秒単位で、この時間内に変化がなければ空の応答が返ります。
+3.  **イベント受信**: スピーカー側で状態変化が起きると、`pollQueue`への応答として更新情報が返されます。
+4.  **継続**: アプリは応答を受け取ったら、すぐに次の`pollQueue`リクエストを送信して監視を続けます。
 
-**`modifyQueue`リクエストボディ例**:
+**`modifyQueue`リクエストボディ**:
 
 ```json
 {
   "subscribe": [
     {"path": "player:player/data", "type": "item"},
     {"path": "player:volume", "type": "itemWithValue"},
-    {"path": "settings:/mediaPlayer/playMode", "type": "itemWithValue"},
-    {"path": "playlists:pq/getitems", "type": "rows"}
-  ],
-  "unsubscribe": []
+    {"path": "settings:/mediaPlayer/playMode", "type": "itemWithValue"}
+  ]
 }
 ```
 
-**`pollQueue`レスポンスボディ例**:
+**`modifyQueue`レスポンスボディ**:
+
+```json
+"{d3474c09-4408-4aff-8bae-c06041a7925b}"
+```
+
+**`pollQueue`レスポンスボディ (イベント発生時)**:
 
 ```json
 [
@@ -205,6 +185,35 @@
     "itemType": "update",
     "path": "player:volume",
     "itemValue": {"type": "i32_", "i32_": 35}
+  },
+  {
+    "itemType": "update",
+    "path": "settings:/mediaPlayer/playMode",
+    "itemValue": {"type": "playerPlayMode", "playerPlayMode": "shuffle"}
   }
 ]
 ```
+
+### 1.5 エラーハンドリング
+
+API呼び出しが失敗した場合、HTTPステータスコードと、場合によってはエラーメッセージを含むJSONが返されます。
+
+| ステータスコード | 意味 | 考えられる原因 |
+| :--- | :--- | :--- |
+| **404 Not Found** | リクエストされた`path`が存在しない。 | `path`のスペルミス。 |
+| **500 Internal Server Error**| スピーカー内部で処理エラーが発生した。| - `setData`の`value`オブジェクトの形式が間違っている。\<br\>- 必須のパラメータが不足している。\<br\>- スピーカーが一時的に不安定な状態にある。|
+
+**`500`エラー時のレスポンスボディ例**:
+
+```json
+{
+  "error": "Internal Server Error",
+  "message": "An unexpected error occurred"
+}
+```
+
+(注: エラーメッセージの内容は状況により異なる場合があります)
+
+-----
+
+このドキュメントが、あなたのアプリケーション開発の確かな土台となることを願っています。
