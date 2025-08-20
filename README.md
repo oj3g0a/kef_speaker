@@ -1,370 +1,611 @@
-# KEF LSX II ネットワークスピーカー 外部コントロールAPI仕様
+# KEF LSX II ネットワークスピーカー 外部コントロールAPI仕様書
 
-## 近道
+## 目次
 
-1. `get_playlist.py` の以下の行を修正：
-
-   ```python
-   SPEAKER_IP = "192.168.0.XX"
-   ```
-
-2. 修正後、スクリプトを実行し、ログからプレイリストの URL を取得。
-
-3. `play_playlist.py` の以下の部分を修正：
-
-   ```python
-   SPEAKER_IP = "192.168.0.XXXX"
-   PLAYLIST_PATH = "airable:https://8448239770.airable.io/amazon/playlist/XXXXXXXXX"
-   ```
-
-4. 修正後、`play_playlist.py` を実行すれば、音楽が再生される。
-
-## 前提
-
-### 1\. 最も重要な概念：「要約情報」と「完全な情報」の使い分け
-
-このAPIを扱う上で最も重要な点は、**2種類の「曲情報オブジェクト」が存在し、それぞれ役割が異なる**という事実です。
-
-  * **要約情報 (Summary Info)**
-
-      * **取得方法**: `GET /api/getRows`
-      * **役割**: アプリの画面にリストを表示するための、**概要のみの情報**です。図書館の**蔵書目録**に例えられます。再生に必要な全ての情報（再生用URLなど）は含まれていません。
-      * **用途**: **再生キューへの追加 (`playlists:pl/addexternalitems`)** に使用します。
-
-  * **完全な情報 (Complete Info)**
-
-      * **取得方法**: `GET /api/getData`
-      * **役割**: 曲の再生用URLなど、再生に必須の全ての情報を含んだオブジェクトです。図書館の**本そのもの**に例えられます。
-      * **用途**: **再生命令 (`player:player/control`)** に使用します。
-
-### 2\. 再生フローの罠：特殊なキュー追加の仕様
-
-再生フローの重要なステップである「再生キューへの曲追加」は、非常に特殊な形式を要求します。
-
-  * **API**: `POST /api/setData` with `path: "playlists:pl/addexternalitems"`
-  * **仕様**: `value`には `{"items": [{"nsdkRoles": "..."}]}` という特殊な構造を使います。さらに`nsdkRoles`の値には、**`getRows`で取得した「要約情報」オブジェクトをJSON文字列に変換したもの**を渡す必要があります。
-
-### 3\. コンテンツによる手順の違い
-
-本仕様書で解説する再生フローは、主に**ストリーミングサービス**（Airable, Amazon Musicなど、`airable:`で始まる`path`を持つもの）を再生するためのものです。
-
-`sources:/`から見つかるようなローカルネットワーク上の音楽ファイル（UPnP）は、全く異なる手順や情報が必要である可能性が極めて高いです。全ての音楽ソースが同じ手順で再生できると仮定すると、エラーの原因となります。
-
-### 4\. 仕様書にないAPIの挙動
-
-  * **`getData`の応答形式**: `getData` APIは、問い合わせる`path`によって、応答が単一のJSONオブジェクト `{}` の場合と、それをリストで囲んだ `[{}]` の場合があるため、クライアント側は両方の形式を処理できる必要があります。
-  * **「見かけ上の曲」の存在**: `getRows`で得られるリストの中には、`"type": "audio"`でありながら、再生に必要な`mediaData`を持たない「ショートカット」のような項目が多数含まれています。本当に再生可能か否かは、`getData`で「完全な情報」を取得し、その中に`mediaData.resources`キーが存在するかで最終的に判断する必要があります。
-
------
-
-以上の点を踏まえ、以下に現在判明している全ての仕様を反映したドキュメントを記載します。
+1. [概要](#概要)
+3. [APIエンドポイント一覧](#apiエンドポイント一覧)
+4. [データ型定義](#データ型定義)
+5. [音楽再生API詳細](#音楽再生api詳細)
+6. [設定管理API](#設定管理api)
+7. [イベント通知システム](#イベント通知システム)
+8. [エラーハンドリング](#エラーハンドリング)
 
 ## 概要
 
-本文書は、KEF LSX II ネットワークスピーカーを外部プログラムから制御するためのHTTP/JSON API仕様を網羅的に解説するものです。
+本文書は、KEF LSX II ネットワークスピーカーを外部プログラムから制御するためのHTTP/JSON API仕様を網羅的に解説します。
 
-*注: スピーカーにはハードウェアを直接制御する低レベルなバイナリTCP API（ポート50001）も存在しますが、本文書で解説するHTTP APIがその全機能をカバーしており、より柔軟な制御が可能であるため、低レベルAPIに関する説明は割愛します。*
+### 接続情報
+- **プロトコル**: HTTP
+- **ポート**: 80（デフォルト）
+- **ベースURL**: `http://[SPEAKER_IP]/api`
+- **コンテンツタイプ**: `application/json`
+- **文字エンコーディング**: UTF-8
 
-### APIエンドポイントリファレンス
+### 認証
+現在のバージョンでは認証は不要です。スピーカーと同じネットワーク内からアクセス可能です。
 
-| APIエンドポイント         | HTTPメソッド | 役割                                                         |
-| :-------------------------- | :----------- | :----------------------------------------------------------- |
-| `GET /api/getRows`          | `GET`        | メニューや曲の**一覧（要約情報）を取得します。               |
-| `GET /api/getData`          | `GET`        | 単一項目の**詳細（完全な情報）**や現在の設定値を取得します。   |
-| `POST /api/setData`         | `POST`       | 再生や**設定変更**などのアクションを命令します。               |
-| `POST /api/event/modifyQueue` | `POST`       | サーバーからの**イベント通知を購読**するために使用します。     |
-| `GET /api/event/pollQueue`  | `GET`        | 購読したイベントの**更新情報を受信\*\*します。                   |
 
------
+## APIエンドポイント一覧
 
-## Part 1: 機能別API解説
+| エンドポイント | メソッド | 説明 | 必須パラメータ |
+|--------------|---------|------|---------------|
+| `/api/getRows` | GET | リスト情報（要約）の取得 | `path`, `roles`, `from`, `to` |
+| `/api/getData` | GET | 詳細情報（完全）の取得 | `path`, `roles` |
+| `/api/setData` | POST | 設定変更・コマンド実行 | `path`, `role`, `value` |
+| `/api/getImage` | GET | アートワーク画像の取得 | `path` |
+| `/api/event/modifyQueue` | POST | イベント購読の設定 | `subscribe` または `unsubscribe` |
+| `/api/event/pollQueue` | GET | イベントのロングポーリング | `queueId`, `timeout` |
 
-### 1.1 音楽再生（ストリーミングサービス）
+## データ型定義
 
-#### **【最重要】再生フロー概要**
+### 基本データ型
 
-1.  **【要約情報の取得】**: `getRows` を使い、再生したい曲の\*\*「要約情報」\*\*とその`path`を取得します。
-2.  **【完全な情報の取得】**: ステップ1で取得した`path`を使い、`getData`を呼び出して、再生命令に必要な\*\*「完全な情報」\*\*を取得します。
-3.  **【キューへの追加】**: `setData` で `playlists:pl/addexternalitems` を呼び出し、ステップ1で得た\*\*「要約情報」\*\*を使って再生キューに曲を追加します。
-4.  **【再生の命令】**: `setData` で `player:player/control` を呼び出し、ステップ2で得た\*\*「完全な情報」\*\*を使って再生を開始します。
-
-#### **ステップ1: `getRows`による【要約情報】の取得**
-
-まず、再生したい曲が含まれるプレイリストなどの具体的な`path`を使い、`getRows`を呼び出します。
-
-  * **API**: `GET /api/getRows`
-  * **必須パラメータ**:
-      * `path`: プレイリスト等のパス (例: `airable:...`)
-      * `roles`: `@all` （全ての情報を要求する固定値）
-      * `from`: `0` （リストの取得開始位置）
-      * `to`: `29` （リストの取得終了位置、例: 30件取得）
-  * **完全なリクエスト例**: `GET /api/getRows?path=...&roles=@all&from=0&to=29`
-  * **目的**: プレイリスト内の曲の一覧（**要約情報**）を取得する。
-
-**応答例 (`rows`配列内)**:
-
+#### 値オブジェクトの型指定
 ```json
 {
-  "type": "audio",
-  "path": "airable:https://.../track/[Track_ID_1]",
-  "title": "曲名A",
-  "subTitle": "アーティストA"
+  "type": "TYPE_NAME",
+  "TYPE_NAME": VALUE,
+  "stability": 0  // 多くの場合必須
 }
 ```
 
-*このオブジェクト全体が*\*\*「要約情報」\*\**です。*
-*`path`の値はステップ2で使います。*
+| type値 | 実際のキー | 値の型 | 用途例 |
+|--------|-----------|--------|--------|
+| `i32_` | `i32_` | number (整数) | 音量、インデックス |
+| `i64_` | `i64_` | number (長整数) | 再生時間（ミリ秒） |
+| `i16_` | `i16_` | number (短整数) | 音量ステップ |
+| `string_` | `string_` | string | 設定文字列 |
+| `bool_` | `bool_` | boolean | ON/OFF設定 |
+| `double_` | `double_` | number (浮動小数) | DSP設定値 |
+| `playerPlayMode` | `playerPlayMode` | string | 再生モード |
+| `kefStandbyMode` | `kefStandbyMode` | string | スタンバイ設定 |
 
------
+### トラックオブジェクト
 
-#### **ステップ2: `getData`による【完全な情報】の取得**
+#### 要約情報（getRowsで取得）
+```json
+{
+  "type": "audio",
+  "path": "airable:https://.../track/[ID]",
+  "title": "曲名",
+  "subTitle": "アーティスト名",
+  "icon": "画像パスまたはURL",
+  "duration": 240000,
+  "id": "unique_track_id"
+}
+```
 
-次に、ステップ1で取得した曲の`path`を使い、`getData`を呼び出します。
-
-  * **API**: `GET /api/getData`
-  * **必須パラメータ**:
-      * `path`: 曲のパス（ステップ1で取得したもの）
-      * `roles`: `@all` （全ての情報を要求する固定値）
-  * **完全なリクエスト例**: `GET /api/getData?path=...&roles=@all`
-  * **目的**: 再生命令で必要となる\*\*「完全な情報」\*\*を取得する。
-
-**応答例**:
-
+#### 完全情報（getDataで取得）
 ```json
 {
   "type": "audio",
   "path": "playlists:item/1",
-  "title": "曲名A",
+  "title": "曲名",
+  "value": {
+    "type": "i32_",
+    "i32_": 0,
+    "stability": 0
+  },
+  "context": {
+    "title": "Playlist",
+    "type": "container",
+    "containerType": "context",
+    "path": "playlists:pl/trackcontextmenu?action=cmnode?itemid=1?plid=0?seqnum=0",
+    "isEmpty": false,
+    "stability": 0
+  },
   "mediaData": {
     "resources": [
-      { "uri": "https://.../stream_url", "..." }
+      {
+        "uri": "https://streaming.url/path",
+        "mimeType": "audio/mpeg",
+        "size": 0,
+        "duration": 240000
+      }
     ],
-    "metaData": { "artist": "アーティストA", "..." }
+    "metaData": {
+      "title": "曲名",
+      "artist": "アーティスト名",
+      "album": "アルバム名",
+      "artwork": "画像パス",
+      "playLogicPath": "playlists:playlogic",
+      "stability": 0
+    },
+    "stability": 0
+  },
+  "stability": 0
+}
+```
+
+### コンテナ（プレイリスト/フォルダ）オブジェクト
+```json
+{
+  "type": "container",
+  "path": "airable:https://.../playlist/[ID]",
+  "title": "プレイリスト名",
+  "subTitle": "説明",
+  "icon": "画像パスまたはURL",
+  "containerPlayable": true,  // 直接再生可能
+  "isEmpty": false,
+  "trackCount": 25
+}
+```
+
+### プレイヤーデータ
+```json
+{
+  "state": "playing",  // "playing" | "paused" | "stopped"
+  "status": {
+    "duration": 240000,
+    "position": 120000
+  },
+  "trackRoles": { /* 現在再生中のトラック完全情報 */ },
+  "index": 5,
+  "volume": 42,
+  "controls": {
+    "playMode": {
+      "repeatOne": true,
+      "repeatAll": true,
+      "shuffle": true,
+      "shuffleRepeatOne": true,
+      "shuffleRepeatAll": true
+    },
+    "seekTime": true,
+    "seekBytes": false,
+    "previous": true,
+    "pause": true,
+    "next_": true
   }
 }
 ```
 
-*このオブジェクト全体が*\*\*「完全な情報」\*\**です。*
-*`mediaData.resources`に再生用URLが含まれていることが、再生可能なトラックであることの証明です。*
+## 音楽再生API詳細
 
------
+### 再生フロー全体像
 
-#### **ステップ3: `setData`によるキューへの追加**
+```mermaid
+graph TD
+    A[1. getRows: プレイリスト取得] --> B[2. getData: 曲詳細取得]
+    B --> C[3. clearQueue: キュークリア]
+    C --> D[4. addTracksToQueue: 全曲追加]
+    D --> E[5. playTrack: 再生開始]
+```
 
-必要な情報が全て揃ったら、`setData`を使い、\*\*「要約情報」\*\*を再生キューに追加します。
+### 1. プレイリスト内容の取得
 
-  * **API**: `POST /api/setData`
-  * **Path**: `playlists:pl/addexternalitems`
-  * **重要なルール**: `value`に指定する`items`の中には、ステップ1で取得した\*\*「要約情報」オブジェクトをJSON文字列に変換したもの\*\*を`nsdkRoles`キーで渡します。
+#### リクエスト
+```http
+GET /api/getRows?path=airable:https://...&roles=@all&from=0&to=999
+```
 
-**リクエストボディ例**:
-
+#### レスポンス
 ```json
+{
+  "rows": [
+    {
+      "type": "audio",
+      "path": "airable:https://.../track/001",
+      "title": "Track 1",
+      "subTitle": "Artist 1"
+    },
+    // ... more tracks
+  ],
+  "rowsCount": 50,
+  "totalCount": 50
+}
+```
+
+### 2. トラック詳細の取得
+
+#### リクエスト
+```http
+GET /api/getData?path=airable:https://.../track/001&roles=@all
+```
+
+#### レスポンス形式の注意点
+- 単一オブジェクト `{}` または配列 `[{}]` の両方の可能性がある
+- 配列の場合は最初の要素を使用
+- `mediaData.resources` の存在が再生可能性の証明
+
+### 3. キューのクリア
+
+#### リクエスト
+```json
+POST /api/setData
+{
+  "path": "playlists:pl/clear",
+  "role": "activate",
+  "value": {"stability": 0}
+}
+```
+
+### 4. キューへの曲追加
+
+#### 単一曲の追加
+```json
+POST /api/setData
 {
   "path": "playlists:pl/addexternalitems",
   "role": "activate",
   "value": {
     "items": [
       {
-        "nsdkRoles": "{\"type\":\"audio\",\"path\":\"airable:https://.../track/[Track_ID_1]\",\"title\":\"曲名A\",\"subTitle\":\"アーティストA\"}"
+        "nsdkRoles": "{\"type\":\"audio\",\"path\":\"...\",\"title\":\"...\"}"
       }
     ]
   }
 }
 ```
 
------
+**重要**: `nsdkRoles`の値は要約情報オブジェクトをJSON文字列化したもの
 
-#### **ステップ4: `setData`による再生命令**
-
-最後に、`setData`で再生を命令します。
-
-  * **API**: `POST /api/setData`
-  * **Path**: `player:player/control`
-  * **重要なルール**: `value`の中の`trackRoles`キーには、**ステップ2で取得した「完全な情報」オブジェクト**を渡します。
-
-**リクエストボディ例**:
-
+#### 複数曲の一括追加
 ```json
 {
-  "path": "player:player/control",
-  "role": "activate",
   "value": {
-    "control": "play",
-    "index": 0,
-    "trackRoles": {
-      "type": "audio",
-      "path": "playlists:item/1",
-      "title": "曲名A",
-      "mediaData": {
-        "resources": [
-          { "uri": "https://.../stream_url", "..." }
-        ],
-        "metaData": { "artist": "アーティストA", "..." }
-      }
-    },
-    "mediaRoles": {
-      "type": "container",
-      "path": "playlists:pq/getitems",
-      "mediaData": { "metaData": { "playLogicPath": "playlists:playlogic" } },
-      "title": "PlayQueue tracks"
-    },
-    "shuffle": false,
-    "repeatMode": "Off"
+    "items": [
+      {"nsdkRoles": "{...}"},
+      {"nsdkRoles": "{...}"},
+      {"nsdkRoles": "{...}"}
+    ]
   }
 }
 ```
 
------
-
-### 1.2 スピーカーの一般設定
-
-`getData`で現在の値を取得し、`setData`で値を変更できます。
-
-**取得**: `GET /api/getData?path={path}&roles=value`
-**設定**: `POST /api/setData` with `{"path": "{path}", "role": "value", "value": { ... }}`
-
-| 機能 | `path` | `setData`のvalueオブジェクト例 |
-| :--- | :--- | :--- |
-| **スピーカー名** | `settings:/deviceName` | `{"type":"string_","string_":"新しい名前"}` |
-| **UI言語** | `settings:/ui/language` | `{"type":"string_","string_":"ja_JP"}` |
-| **Airable言語** | `settings:/airable/language`| `{"type":"string_","string_":"ja_JP"}` |
-| **音量上限の有効化** | `settings:/kef/host/volumeLimit` | `{"type":"bool_","bool_":true}` |
-| **最大音量** | `settings:/kef/host/maximumVolume`| `{"type":"i32_","i32_":80}` |
-| **音量ステップ幅** | `settings:/kef/host/volumeStep`| `{"type":"i16_","i16_":5}` |
-| **各入力のデフォルト音量** | `settings:/kef/host/defaultVolume{Source}`\<br\>(Source: Wifi, Analogue, Optical, TV, USB, Bluetooth, Coaxial, Global) | `{"type":"i32_","i32_":25}` |
-| **自動スタンバイ** | `settings:/kef/host/standbyMode` | `{"type":"kefStandbyMode","kefStandbyMode":"standby_60mins"}` |
-| **自動起動ソース** | `settings:/kef/host/wakeUpSource`| `{"type":"kefWakeUpSource","kefWakeUpSource":"tv"}` |
-| **HDMIへ自動切替** | `settings:/kef/host/autoSwitchToHDMI`| `{"type":"bool_","bool_":false}` |
-| **天面パネル無効化** | `settings:/kef/host/disableTopPanel`| `{"type":"bool_","bool_":true}` |
-| **起動音** | `settings:/kef/host/startupTone` | `{"type":"bool_","bool_":true}` |
-| **スタンバイLED無効化** |`settings:/kef/host/disableFrontStandbyLED`| `{"type":"bool_","bool_":false}` |
-| **マスター/スレーブ接続** | `settings:/kef/host/cableMode` | `{"type":"kefCableMode","kefCableMode":"wired"}` |
-| **マスターチャンネル** | `settings:/kef/host/masterChannelMode`| `{"type":"kefMasterChannelMode","kefMasterChannelMode":"left"}`|
-| **USB充電** | `settings:/kef/host/usbCharging` | `{"type":"bool_","bool_":true}` |
-| **サブウーファー常時ON** | `settings:/kef/host/subwooferForceOn`| `{"type":"bool_","bool_":true}` |
-| **KW1サブウーファー強制ON** | `settings:/kef/host/subwooferForceOnKW1`| `{"type":"bool_","bool_":true}` |
-| **アプリ解析無効化** | `settings:/kef/host/disableAppAnalytics` | `{"type":"bool_","bool_":true}` |
-
------
-
-### 1.3 DSP/EQ（音質）設定
-
-スピーカーの音質を詳細に調整します。設定項目の一覧は`getRows`で取得し、各項目の値は`getData`/`setData`で個別に操作します。
-
-**設定項目一覧の取得**: `GET /api/getRows?path=kef:dsp/editValue&roles=@all`
-
-| 機能 | `path` | `setData`のvalueオブジェクト例 |
-| :--- | :--- | :--- |
-| **バランス** | `settings:/kef/dsp/v2/balance` | `{"type":"i32_","i32_":-5}` |
-| **デスクモード ON/OFF** | `settings:/kef/dsp/v2/deskMode` | `{"type":"bool_","bool_":true}` |
-| **デスクモード補正値** | `settings:/kef/dsp/v2/deskModeSetting`| `{"type":"double_","double_":-2.5}` |
-| **壁モード ON/OFF** | `settings:/kef/dsp/v2/wallMode` | `{"type":"bool_","bool_":false}` |
-| **壁モード補正値** | `settings:/kef/dsp/v2/wallModeSetting`| `{"type":"double_","double_":-6.0}` |
-| **高音調整** | `settings:/kef/dsp/v2/trebleAmount` | `{"type":"double_","double_":1.5}` |
-| **低音拡張** | `settings:/kef/dsp/v2/bassExtension` | `{"type":"string_","string_":"extra"}` |
-| **位相補正** | `settings:/kef/dsp/v2/phaseCorrection`| `{"type":"bool_","bool_":false}` |
-| **サブウーファー出力** | `settings:/kef/dsp/v2/subwooferOut` | `{"type":"bool_","bool_":false}` |
-| **ハイパス ON/OFF** | `settings:/kef/dsp/v2/highPassMode` | `{"type":"bool_","bool_":true}` |
-| **ハイパス周波数** | `settings:/kef/dsp/v2/highPassModeFreq`| `{"type":"double_","double_":80.0}`|
-| **サブウーファーゲイン** | `settings:/kef/dsp/v2/subwooferGain`| `{"type":"i32_","i32_":2}` |
-| **サブウーファー極性** | `settings:/kef/dsp/v2/subwooferPolarity`|`{"type":"string_","string_":"inverted"}`|
-| **サブウーファーLP周波数**| `settings:/kef/dsp/v2/subOutLPFreq` | `{"type":"double_","double_":100.0}`|
-| **サブウーファー数** | `settings:/kef/dsp/v2/subwooferCount` | `{"type":"i32_","i32_":1}` |
-| **サブウーファープリセット**| `settings:/kef/dsp/v2/subwooferPreset` | `{"type":"string_","string_":"kc62"}`|
-| **KW1接続** | `settings:/kef/dsp/v2/isKW1` | `{"type":"bool_","bool_":true}` |
-| **音声極性** | `settings:/kef/dsp/v2/audioPolarity` | `{"type":"string_","string_":"inverted"}`|
-| **ダイアログモード** | `settings:/kef/dsp/v2/dialogueMode`| `{"type":"bool_","bool_":true}` |
-
------
-
-### 1.4 プレイヤーとシステム情報の取得
-
-主に`getData`を使用し、再生中の状態やシステム情報を取得します。
-
-| 機能 | `path` | API | 説明 |
-| :--- | :--- | :--- | :--- |
-| **現在再生中の情報** | `player:player/data` | `getData` | 曲、状態、制御オプションなどを含む詳細なJSONを返す |
-| **再生時間** | `player:player/data/playTime`| `getData` | 現在の再生時間（ミリ秒）を返す |
-| **現在の音量** | `player:volume` | `getData` | 現在の音量を返す (0-100の整数) |
-| **現在のミュート状態**|`settings:/mediaPlayer/mute`|`getData`|ミュート状態を返す (`bool_`)|
-| **MACアドレス**| `settings:/system/primaryMacAddress` | `getData` | プライマリMACアドレスを取得 |
-| **ファームウェアバージョン**| `settings:/version` | `getData` | ファームウェアのバージョン文字列を取得 |
-| **リリース情報** | `settings:/releasetext` | `getData` | リリース情報を取得 |
-| **モデル名** | `settings:/kef/host/modelName`| `getData` | スピーカーのモデル名を取得 |
-| **電源状態** | `settings:/kef/host/speakerStatus`| `getData` | 電源状態を取得 |
-| **アラーム/タイマー** | `alerts:/list` | `getData` | 設定されているアラームやタイマーの一覧を取得 |
-| **FW更新情報**| `kef:fwupgrade/info` | `getData` | ファームウェア更新の状態や進捗を取得 |
-| **現在の入力ソース** | `settings:/kef/play/physicalSource` | `getData` | 現在の物理入力ソースを取得 |
-
------
-
-### 1.5 イベント通知システム
-
-スピーカーの状態変化をリアルタイムに受け取るための高度な機能です。
-
-**フロー**:
-
-1.  **購読開始**: アプリ起動時に一度だけ、`POST /api/event/modifyQueue` を呼び出し、監視したい`path`を購読(`subscribe`)します。応答として`queueId`が返されます。
-2.  **ポーリング**: `GET /api/event/pollQueue?queueId={ID}&timeout=25` をロングポーリングで呼び出し続けます。`timeout`は秒単位で、この時間内に変化がなければ空の応答が返ります。
-3.  **イベント受信**: スピーカー側で状態変化（例：音量変更）が起きると、`pollQueue`への応答として更新情報が返されます。
-4.  **継続**: アプリは応答を受け取ったら、すぐに次の`pollQueue`リクエストを送信して監視を続けます。
-
-**`modifyQueue`リクエストボディ例**:
+### 5. 再生の開始
 
 ```json
+POST /api/setData
 {
-  "subscribe": [
-    {"path": "player:player/data", "type": "item"},
-    {"path": "player:volume", "type": "itemWithValue"},
-    {"path": "settings:/mediaPlayer/playMode", "type": "itemWithValue"},
-    {"path": "playlists:pq/getitems", "type": "rows"}
-  ],
-  "unsubscribe": []
+  "path": "player:player/control",
+  "role": "activate",
+  "value": {
+    "type": "itemInContainer",
+    "control": "play",
+    "index": 0,
+    "startPaused": false,
+    "trackRoles": { /* 完全なトラック情報 */ },
+    "mediaRoles": {
+      "title": "PlayQueue tracks",
+      "type": "container",
+      "containerType": "none",
+      "path": "playlists:pq/getitems",
+      "mediaData": {
+        "metaData": {
+          "playLogicPath": "playlists:playlogic",
+          "stability": 0
+        },
+        "stability": 0
+      },
+      "timestamp": 1234567890000,
+      "isEmpty": false,
+      "stability": 0
+    }
+  }
 }
 ```
 
-**`modifyQueue`レスポンスボディ**:
+### 再生制御コマンド
 
+#### 一時停止
+```json
+POST /api/setData
+{
+  "path": "player:player/control",
+  "role": "activate",
+  "value": {"control": "pause"}
+}
 ```
+
+#### 再開
+```json
+POST /api/setData
+{
+  "path": "player:player/control",
+  "role": "activate",
+  "value": {"control": "play"}
+}
+```
+
+#### 次の曲
+```json
+POST /api/setData
+{
+  "path": "player:player/control",
+  "role": "activate",
+  "value": {"control": "next"}
+}
+```
+
+#### 前の曲
+```json
+POST /api/setData
+{
+  "path": "player:player/control",
+  "role": "activate",
+  "value": {"control": "previous"}
+}
+```
+
+#### シーク
+```json
+POST /api/setData
+{
+  "path": "player:player/control",
+  "role": "activate",
+  "value": {
+    "control": "seekTime",
+    "time": 120000  // ミリ秒
+  }
+}
+```
+
+### 音量制御
+
+#### 音量取得
+```http
+GET /api/getData?path=player:volume&roles=value
+```
+
+レスポンス:
+```json
+[{"type": "i32_", "i32_": 42}]
+```
+
+#### 音量設定
+```json
+POST /api/setData
+{
+  "path": "player:volume",
+  "role": "value",
+  "value": {"type": "i32_", "i32_": 50}
+}
+```
+
+### プレイモード設定
+
+#### 現在のモード取得
+```http
+GET /api/getData?path=settings:/mediaPlayer/playMode&roles=value
+```
+
+#### モード設定
+```json
+POST /api/setData
+{
+  "path": "settings:/mediaPlayer/playMode",
+  "role": "value",
+  "value": {
+    "type": "playerPlayMode",
+    "playerPlayMode": "shuffle",  // 下記参照
+    "stability": 0
+  }
+}
+```
+
+| プレイモード値 | 説明 |
+|--------------|------|
+| `normal` | 通常再生 |
+| `shuffle` | シャッフルのみ |
+| `repeatAll` | 全曲リピート |
+| `repeatOne` | 1曲リピート |
+| `shuffleRepeatAll` | シャッフル＋全曲リピート |
+| `shuffleRepeatOne` | シャッフル＋1曲リピート |
+
+## 設定管理API
+
+### スピーカー設定
+
+| 設定項目 | パス | 値の型と例 |
+|---------|------|-----------|
+| スピーカー名 | `settings:/deviceName` | `{"type":"string_","string_":"Living Room"}` |
+| UI言語 | `settings:/ui/language` | `{"type":"string_","string_":"ja_JP"}` |
+| 音量上限有効化 | `settings:/kef/host/volumeLimit` | `{"type":"bool_","bool_":true}` |
+| 最大音量 | `settings:/kef/host/maximumVolume` | `{"type":"i32_","i32_":80}` |
+| 音量ステップ | `settings:/kef/host/volumeStep` | `{"type":"i16_","i16_":5}` |
+| 自動スタンバイ | `settings:/kef/host/standbyMode` | `{"type":"kefStandbyMode","kefStandbyMode":"standby_60mins"}` |
+| 起動音 | `settings:/kef/host/startupTone` | `{"type":"bool_","bool_":true}` |
+
+### DSP/EQ設定
+
+| 設定項目 | パス | 値の型と例 |
+|---------|------|-----------|
+| バランス | `settings:/kef/dsp/v2/balance` | `{"type":"i32_","i32_":0}` (-100~100) |
+| デスクモード | `settings:/kef/dsp/v2/deskMode` | `{"type":"bool_","bool_":true}` |
+| デスクモード補正 | `settings:/kef/dsp/v2/deskModeSetting` | `{"type":"double_","double_":-2.5}` |
+| 壁モード | `settings:/kef/dsp/v2/wallMode` | `{"type":"bool_","bool_":false}` |
+| 壁モード補正 | `settings:/kef/dsp/v2/wallModeSetting` | `{"type":"double_","double_":-6.0}` |
+| 高音調整 | `settings:/kef/dsp/v2/trebleAmount` | `{"type":"double_","double_":1.5}` |
+| 低音拡張 | `settings:/kef/dsp/v2/bassExtension` | `{"type":"string_","string_":"extra"}` |
+| 位相補正 | `settings:/kef/dsp/v2/phaseCorrection` | `{"type":"bool_","bool_":true}` |
+
+### 入力ソース管理
+
+#### 現在のソース取得
+```http
+GET /api/getData?path=inputs:activeInput&roles=value
+```
+
+#### 利用可能なソース一覧
+```http
+GET /api/getRows?path=inputs:&roles=@all&from=0&to=20
+```
+
+#### ソース切り替え
+```json
+POST /api/setData
+{
+  "path": "inputs:activeInput",
+  "role": "value",
+  "value": "inputs:wifi"  // または "inputs:bluetooth", "inputs:optical" など
+}
+```
+
+### システム情報取得
+
+| 情報 | パス | 説明 |
+|------|------|------|
+| 再生状態 | `player:player/data` | 詳細な再生情報 |
+| 再生時間 | `player:player/data/playTime` | 現在位置（ミリ秒） |
+| キュー状態 | `playlists:pq/getitems` | キュー内の曲リスト |
+| 電源状態 | `settings:/kef/host/speakerStatus` | `kefSpeakerStatus` |
+| FWバージョン | `settings:/version` | ファームウェアバージョン |
+| MACアドレス | `settings:/system/primaryMacAddress` | ネットワークアドレス |
+| モデル名 | `settings:/kef/host/modelName` | スピーカーモデル |
+
+## イベント通知システム
+
+### 購読の開始
+
+```json
+POST /api/event/modifyQueue
+{
+  "subscribe": [
+    {"path": "player:player/data", "type": "item"},
+    {"path": "player:player/data/playTime", "type": "itemWithValue"},
+    {"path": "player:volume", "type": "itemWithValue"},
+    {"path": "settings:/mediaPlayer/playMode", "type": "itemWithValue"}
+  ]
+}
+```
+
+レスポンス:
+```json
 "{1b3d66ba-748c-4bb1-a0b8-4517e39bc8c7}"
 ```
 
-**`pollQueue`レスポンスボディ (イベント発生時)**:
+### ロングポーリング
 
+```http
+GET /api/event/pollQueue?queueId={UUID}&timeout=25
+```
+
+- `timeout`: サーバー側タイムアウト（秒）、推奨値: 25
+- クライアント側タイムアウト: 30秒推奨
+- レスポンス: イベント配列または空配列
+
+#### イベントレスポンス例
 ```json
 [
   {
     "itemType": "update",
     "path": "player:volume",
-    "itemValue": {"type": "i32_", "i32_": 35}
+    "itemValue": {"type": "i32_", "i32_": 45}
   },
   {
     "itemType": "update",
-    "path": "settings:/mediaPlayer/playMode",
-    "itemValue": {"type": "playerPlayMode", "playerPlayMode": "shuffle"}
+    "path": "player:player/data",
+    "itemValue": { /* プレイヤーデータ */ }
   }
 ]
 ```
 
------
-
-### 1.6 エラーハンドリング
-
-API呼び出しが失敗した場合、HTTPステータスコードと、場合によってはエラーメッセージを含むJSONが返されます。
-
-| ステータスコード | 意味 | 考えられる原因 |
-| :--- | :--- | :--- |
-| **404 Not Found** | リクエストされた`path`が存在しない。 | `path`のスペルミス。 |
-| **500 Internal Server Error**| スピーカー内部で処理エラーが発生した。| - `setData`の`value`オブジェクトの形式が間違っている。\<br\>- 必須のパラメータが不足している。\<br\>- スピーカーが一時的に不安定な状態にある。|
-
-**`500`エラー時のレスポンスボディ例**:
+### 購読の解除
 
 ```json
+POST /api/event/modifyQueue
 {
-  "error": "Internal Server Error",
-  "message": "An unexpected error occurred"
+  "unsubscribe": [
+    {"path": "player:player/data"},
+    {"path": "player:volume"}
+  ]
 }
 ```
 
-*(注: エラーメッセージの内容は状況により異なる場合があります)*
+## エラーハンドリング
+
+### HTTPステータスコード
+
+| コード | 意味 | 対処法 |
+|--------|------|--------|
+| 200 | 成功 | - |
+| 400 | 不正なリクエスト | パラメータを確認、セッション再作成 |
+| 404 | パスが存在しない | パスのスペルを確認 |
+| 500 | サーバーエラー | value形式を確認、リトライ |
+| タイムアウト | ネットワーク問題 | 接続確認、リトライ |
+
+### エラーレスポンス例
+```json
+{
+  "error": "Internal Server Error",
+  "message": "missing path parameter",
+  "details": {
+    "path": null,
+    "requiredParams": ["path", "roles"]
+  }
+}
+```
+
+
+## 画像取得
+
+### アートワーク画像の取得
+
+```http
+GET /api/getImage?path={encoded_image_path}
+```
+
+- `path`: URLエンコードされた画像パス
+- レスポンス: バイナリ画像データ
+- Content-Type: `image/jpeg` または `image/png`
+
+使用例:
+```javascript
+// トラックオブジェクトから画像URLを構築
+function getArtworkUrl(track, speakerIp) {
+  const imagePath = 
+    track.icon ||
+    track.images?.images?.[0]?.url ||
+    track.mediaData?.metaData?.artwork ||
+    track.albumArt;
+  
+  if (!imagePath) return null;
+  
+  // 既にHTTPURLの場合はそのまま使用
+  if (imagePath.startsWith('http')) {
+    return imagePath;
+  }
+  
+  // スピーカー経由で取得
+  return `http://${speakerIp}/api/getImage?path=${encodeURIComponent(imagePath)}`;
+}
+```
+
+## コンテンツパスパターン
+
+### Amazon Music固定パス
+| カテゴリ | エンコードされたパス |
+|---------|---------------------|
+| ライブラリ | `airable:https://8448239770.airable.io/amazon/document/WyJodHRwczpcL1wvbXVzaWMtYXBpLmFtYXpvbi5jb21cL2xpYnJhcnlcLyNsaWJyYXJ5X25vZGVfZGVzYyJd` |
+| プレイリスト | `airable:https://8448239770.airable.io/amazon/document/WyJodHRwczpcL1wvbXVzaWMtYXBpLmFtYXpvbi5jb21cL2NhdGFsb2dcL3BsYXlsaXN0c1wvI3ByaW1lX3BsYXlsaXN0cyJd` |
+| ステーション | `airable:https://8448239770.airable.io/amazon/document/WyJodHRwczpcL1wvbXVzaWMtYXBpLmFtYXpvbi5jb21cL2NhdGFsb2dcL3N0YXRpb25zXC8jcHJpbWVfc3RhdGlvbnMiXQ` |
+| 人気アルバム | `airable:https://8448239770.airable.io/amazon/document/WyJodHRwczpcL1wvbXVzaWMtYXBpLmFtYXpvbi5jb21cL2NhdGFsb2dcL3BvcHVsYXJcL2FsYnVtc1wvI3BvcHVsYXJfYWxidW1zX2Rlc2MiXQ` |
+| 人気曲 | `airable:https://8448239770.airable.io/amazon/playlist/WyJodHRwczpcL1wvbXVzaWMtYXBpLmFtYXpvbi5jb21cL2NhdGFsb2dcL3BvcHVsYXJcL3RyYWNrc1wvI3BvcHVsYXJfdHJhY2tzX2Rlc2MiXQ` |
+| おすすめ | `airable:https://8448239770.airable.io/amazon/document/WyJodHRwczpcL1wvbXVzaWMtYXBpLmFtYXpvbi5jb21cL2NhdGFsb2dcL3JlY3NcLyNjYXRhbG9nX3JlY3NfZGVzYyJd` |
+| 新着アルバム | `airable:https://8448239770.airable.io/amazon/document/WyJodHRwczpcL1wvbXVzaWMtYXBpLmFtYXpvbi5jb21cL2NhdGFsb2dcL25ld1wvYWxidW1zXC8jbmV3X2FsYnVtc19kZXNjIl0` |
+
+### その他のパスパターン
+- キューアイテム: `playlists:item/{1-based-index}`
+- 入力ソース: `inputs:wifi`, `inputs:bluetooth`, `inputs:optical`
+- 検索: `inputs:mediaplayer/search?search={query}`
+
+## 追記事項
+
+### stabilityフィールドについて
+多くのAPIコールで`stability: 0`フィールドが必須です。このフィールドを忘れると500エラーになることがあります。
+
+### コンテンツタイプの判定
+- `type: "container"` かつ `containerPlayable: true` - 直接再生可能なプレイリスト
+- `type: "container"` かつ `containerPlayable: false` - ナビゲーション必要なフォルダ
+- `type: "audio"` - 音楽トラック
+- `type: "action"` - 実行可能なアクション
+
+### パフォーマンス最適化
+- 大量の曲を扱う場合は分割してキューに追加
+- イベント購読は必要最小限のパスのみ
+- キャッシュを活用して不要なAPI呼び出しを削減
+
+---
+
+## 変更履歴
+
